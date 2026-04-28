@@ -6585,6 +6585,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn annotation_delete_own_allows_annotation_owner() {
+        let store = Arc::new(MemoryVersionStore::new());
+        let (handler, _adapter, app_manager) = test_versioned_handler_harness(100, store);
+        let app = test_annotation_app();
+
+        handler
+            .annotation_store()
+            .append_event(StoredAnnotationEvent {
+                app_id: "app-1".to_string(),
+                channel_id: "versioned-room".to_string(),
+                stored_at_ms: sockudo_core::history::now_ms(),
+                annotation: Annotation {
+                    id: AnnotationId::new("ann-own").unwrap(),
+                    action: AnnotationAction::Create,
+                    serial: AnnotationSerial::new("ann:own").unwrap(),
+                    message_serial: MessageSerial::new("msg:1").unwrap(),
+                    annotation_type: AnnotationType::new("reactions:distinct.v1").unwrap(),
+                    name: Some("thumbsup".to_string()),
+                    client_id: Some("user-1".to_string()),
+                    count: None,
+                    data: None,
+                    encoding: None,
+                    timestamp: sockudo_core::history::now_ms(),
+                },
+            })
+            .await
+            .unwrap();
+
+        let socket_id = SocketId::from_string("23.23").unwrap();
+        attach_signed_in_mutation_actor(
+            &handler,
+            app_manager,
+            &app,
+            socket_id,
+            "user-1",
+            ConnectionCapabilities {
+                annotation_delete_own: Some(vec!["versioned-room".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let response = delete_annotation(
+            Path(AnnotationMutationPath {
+                app_id: "app-1".to_string(),
+                channel_name: "versioned-room".to_string(),
+                message_serial: "msg:1".to_string(),
+                annotation_serial: "ann:own".to_string(),
+            }),
+            Query(HashMap::from([(
+                "socket_id".to_string(),
+                socket_id.to_string(),
+            )])),
+            Extension(app),
+            State(handler),
+        )
+        .await
+        .unwrap()
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn annotation_delete_any_allows_moderator() {
+        let store = Arc::new(MemoryVersionStore::new());
+        let (handler, _adapter, app_manager) = test_versioned_handler_harness(100, store);
+        let app = test_annotation_app();
+
+        handler
+            .annotation_store()
+            .append_event(StoredAnnotationEvent {
+                app_id: "app-1".to_string(),
+                channel_id: "versioned-room".to_string(),
+                stored_at_ms: sockudo_core::history::now_ms(),
+                annotation: Annotation {
+                    id: AnnotationId::new("ann-any").unwrap(),
+                    action: AnnotationAction::Create,
+                    serial: AnnotationSerial::new("ann:any").unwrap(),
+                    message_serial: MessageSerial::new("msg:1").unwrap(),
+                    annotation_type: AnnotationType::new("reactions:distinct.v1").unwrap(),
+                    name: Some("thumbsup".to_string()),
+                    client_id: Some("user-1".to_string()),
+                    count: None,
+                    data: None,
+                    encoding: None,
+                    timestamp: sockudo_core::history::now_ms(),
+                },
+            })
+            .await
+            .unwrap();
+
+        let socket_id = SocketId::from_string("24.24").unwrap();
+        attach_signed_in_mutation_actor(
+            &handler,
+            app_manager,
+            &app,
+            socket_id,
+            "moderator",
+            ConnectionCapabilities {
+                annotation_delete_any: Some(vec!["versioned-room".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let response = delete_annotation(
+            Path(AnnotationMutationPath {
+                app_id: "app-1".to_string(),
+                channel_name: "versioned-room".to_string(),
+                message_serial: "msg:1".to_string(),
+                annotation_serial: "ann:any".to_string(),
+            }),
+            Query(HashMap::from([(
+                "socket_id".to_string(),
+                socket_id.to_string(),
+            )])),
+            Extension(app),
+            State(handler),
+        )
+        .await
+        .unwrap()
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn update_message_validates_request_body_before_runtime() {
         let store = Arc::new(MemoryVersionStore::new());
         let handler = test_versioned_handler_with_store(100, store);
