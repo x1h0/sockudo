@@ -262,7 +262,7 @@ impl AnnotationProjection {
         I: IntoIterator<Item = Annotation>,
     {
         let summarizer = annotation_type.summarizer()?;
-        let mut builder = ProjectionBuilder::new(summarizer, options);
+        let mut engine = crate::annotation_summarizers::new_engine(summarizer, options);
         let mut sorted_events: Vec<_> = events.into_iter().collect();
         sorted_events.sort_by(|left, right| left.serial.cmp(&right.serial));
 
@@ -277,7 +277,7 @@ impl AnnotationProjection {
             }
 
             last_serial = Some(event.serial.clone());
-            builder.apply(&event)?;
+            engine.apply(&event)?;
             applied_events += 1;
         }
 
@@ -287,7 +287,7 @@ impl AnnotationProjection {
                 message_serial,
                 annotation_type,
             },
-            summary: builder.finish(),
+            summary: engine.finish(),
             last_serial,
             applied_events,
         })
@@ -481,6 +481,15 @@ pub trait AnnotationStore: Send + Sync {
         request: AnnotationProjectionRequest,
     ) -> Result<StoredAnnotationProjection>;
 
+    async fn rebuild_projection_with_options(
+        &self,
+        request: AnnotationProjectionRequest,
+        options: AnnotationProjectionOptions,
+    ) -> Result<StoredAnnotationProjection> {
+        let _ = options;
+        self.rebuild_projection(request).await
+    }
+
     async fn purge_before(&self, before_ms: i64, batch_size: usize) -> Result<(u64, bool)> {
         let _ = (before_ms, batch_size);
         Ok((0, false))
@@ -545,6 +554,16 @@ impl AnnotationStore for NoopAnnotationStore {
             "Annotation storage is not configured".to_string(),
         ))
     }
+
+    async fn rebuild_projection_with_options(
+        &self,
+        _request: AnnotationProjectionRequest,
+        _options: AnnotationProjectionOptions,
+    ) -> Result<StoredAnnotationProjection> {
+        Err(Error::Configuration(
+            "Annotation storage is not configured".to_string(),
+        ))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -600,31 +619,84 @@ impl MemoryAnnotationStore {
         )
     }
 
-    fn rebuild_projection_from_state(
-        state: &mut MemoryAnnotationState,
-        request: AnnotationProjectionRequest,
-    ) -> Result<StoredAnnotationProjection> {
-        let projection_key = Self::request_projection_key(&request);
-        let events = state
+    fn projection_max_serial(
+        state: &MemoryAnnotationState,
+        projection_key: &str,
+    ) -> Option<AnnotationSerial> {
+        state
             .events_by_projection
-            .get(&projection_key)
-            .map(|events| {
-                events
-                    .values()
-                    .map(|record| record.annotation.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            .get(projection_key)
+            .and_then(|events| events.keys().next_back().cloned())
+    }
 
-        let projection = AnnotationProjection::rebuild(
+    fn projection_events(
+        state: &MemoryAnnotationState,
+        projection_key: &str,
+    ) -> Vec<StoredAnnotationEvent> {
+        state
+            .events_by_projection
+            .get(projection_key)
+            .map(|events| events.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn build_projection(
+        request: &AnnotationProjectionRequest,
+        events: Vec<StoredAnnotationEvent>,
+        options: AnnotationProjectionOptions,
+    ) -> Result<StoredAnnotationProjection> {
+        let projection = AnnotationProjection::rebuild_with_options(
             request.channel_id.clone(),
             request.message_serial.clone(),
             request.annotation_type.clone(),
-            events,
+            events.into_iter().map(|record| record.annotation),
+            options,
         )?;
-        let stored = StoredAnnotationProjection::from_projection(request.app_id, projection);
+        Ok(StoredAnnotationProjection::from_projection(
+            request.app_id.clone(),
+            projection,
+        ))
+    }
+
+    fn rebuild_projection_from_state(
+        state: &mut MemoryAnnotationState,
+        request: AnnotationProjectionRequest,
+        options: AnnotationProjectionOptions,
+    ) -> Result<StoredAnnotationProjection> {
+        let projection_key = Self::request_projection_key(&request);
+        let events = Self::projection_events(state, &projection_key);
+        let stored = Self::build_projection(&request, events, options)?;
         state.projections.insert(projection_key, stored.clone());
         Ok(stored)
+    }
+
+    async fn rebuild_projection_optimistic(
+        &self,
+        request: AnnotationProjectionRequest,
+        options: AnnotationProjectionOptions,
+    ) -> Result<StoredAnnotationProjection> {
+        request.validate()?;
+        let projection_key = Self::request_projection_key(&request);
+
+        loop {
+            let (events, expected_last_serial) = {
+                let state = self.state.read().await;
+                (
+                    Self::projection_events(&state, &projection_key),
+                    Self::projection_max_serial(&state, &projection_key),
+                )
+            };
+
+            let projection = Self::build_projection(&request, events, options)?;
+            let mut state = self.state.write().await;
+            let current_last_serial = Self::projection_max_serial(&state, &projection_key);
+            if current_last_serial == expected_last_serial {
+                state
+                    .projections
+                    .insert(projection_key.clone(), projection.clone());
+                return Ok(projection);
+            }
+        }
     }
 }
 
@@ -648,22 +720,28 @@ impl AnnotationStore for MemoryAnnotationStore {
         let projection_key = Self::event_projection_key(&record);
         let channel_key = Self::channel_key(&record.app_id, &record.channel_id);
 
-        let mut state = self.state.write().await;
-        let events = state
-            .events_by_projection
-            .entry(projection_key)
-            .or_default();
-        events
-            .entry(record.annotation_serial().clone())
-            .or_insert_with(|| record.clone());
-        state
-            .raw_by_channel
-            .entry(channel_key)
-            .or_default()
-            .entry(record.annotation_serial().clone())
-            .or_insert(record);
+        {
+            let mut state = self.state.write().await;
+            let events = state
+                .events_by_projection
+                .entry(projection_key)
+                .or_default();
+            events
+                .entry(record.annotation_serial().clone())
+                .or_insert_with(|| record.clone());
+            state
+                .raw_by_channel
+                .entry(channel_key)
+                .or_default()
+                .entry(record.annotation_serial().clone())
+                .or_insert(record);
+        }
 
-        Self::rebuild_projection_from_state(&mut state, projection_request)
+        self.rebuild_projection_optimistic(
+            projection_request,
+            AnnotationProjectionOptions::default(),
+        )
+        .await
     }
 
     async fn get_events(
@@ -730,7 +808,22 @@ impl AnnotationStore for MemoryAnnotationStore {
         request.validate()?;
         let key = Self::request_projection_key(&request);
         let state = self.state.read().await;
-        Ok(state.projections.get(&key).cloned())
+        let projection = state.projections.get(&key).cloned();
+        let max_serial = Self::projection_max_serial(&state, &key);
+        if projection
+            .as_ref()
+            .is_some_and(|projection| projection.last_annotation_serial == max_serial)
+        {
+            return Ok(projection);
+        }
+        if projection.is_none() && max_serial.is_none() {
+            return Ok(None);
+        }
+        drop(state);
+
+        self.rebuild_projection_optimistic(request, AnnotationProjectionOptions::default())
+            .await
+            .map(Some)
     }
 
     async fn list_projections_for_channel(
@@ -738,15 +831,46 @@ impl AnnotationStore for MemoryAnnotationStore {
         request: AnnotationProjectionsForChannelRequest,
     ) -> Result<Vec<StoredAnnotationProjection>> {
         request.validate()?;
-        let state = self.state.read().await;
-        let mut projections = state
-            .projections
-            .values()
-            .filter(|projection| {
-                projection.app_id == request.app_id && projection.channel_id == request.channel_id
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let requests = {
+            let state = self.state.read().await;
+            let mut requests = BTreeMap::new();
+            for events in state.events_by_projection.values() {
+                let Some(record) = events.values().next() else {
+                    continue;
+                };
+                if record.app_id == request.app_id && record.channel_id == request.channel_id {
+                    let projection_request = AnnotationProjectionRequest {
+                        app_id: record.app_id.clone(),
+                        channel_id: record.channel_id.clone(),
+                        message_serial: record.message_serial().clone(),
+                        annotation_type: record.annotation_type().clone(),
+                    };
+                    requests.insert(
+                        Self::request_projection_key(&projection_request),
+                        projection_request,
+                    );
+                }
+            }
+            for projection in state.projections.values() {
+                if projection.app_id == request.app_id
+                    && projection.channel_id == request.channel_id
+                {
+                    let projection_request = projection.projection_key();
+                    requests.insert(
+                        Self::request_projection_key(&projection_request),
+                        projection_request,
+                    );
+                }
+            }
+            requests.into_values().collect::<Vec<_>>()
+        };
+
+        let mut projections = Vec::new();
+        for projection_request in requests {
+            if let Some(projection) = self.get_projection(projection_request).await? {
+                projections.push(projection);
+            }
+        }
         projections.sort_by(|left, right| {
             left.message_serial
                 .cmp(&right.message_serial)
@@ -759,9 +883,16 @@ impl AnnotationStore for MemoryAnnotationStore {
         &self,
         request: AnnotationProjectionRequest,
     ) -> Result<StoredAnnotationProjection> {
-        request.validate()?;
-        let mut state = self.state.write().await;
-        Self::rebuild_projection_from_state(&mut state, request)
+        self.rebuild_projection_optimistic(request, AnnotationProjectionOptions::default())
+            .await
+    }
+
+    async fn rebuild_projection_with_options(
+        &self,
+        request: AnnotationProjectionRequest,
+        options: AnnotationProjectionOptions,
+    ) -> Result<StoredAnnotationProjection> {
+        self.rebuild_projection_optimistic(request, options).await
     }
 
     async fn purge_before(&self, before_ms: i64, batch_size: usize) -> Result<(u64, bool)> {
@@ -815,7 +946,6 @@ impl AnnotationStore for MemoryAnnotationStore {
         let affected_projection_keys = affected_projection_keys.into_iter().collect::<Vec<_>>();
         let requests = affected_projection_keys
             .iter()
-            .into_iter()
             .filter_map(|key| {
                 state
                     .events_by_projection
@@ -831,7 +961,11 @@ impl AnnotationStore for MemoryAnnotationStore {
             .collect::<Vec<_>>();
 
         for request in requests {
-            Self::rebuild_projection_from_state(&mut state, request)?;
+            Self::rebuild_projection_from_state(
+                &mut state,
+                request,
+                AnnotationProjectionOptions::default(),
+            )?;
         }
         for key in affected_projection_keys {
             if !state.events_by_projection.contains_key(&key) {
@@ -960,273 +1094,6 @@ fn validate_event_key(
     }
 
     Ok(())
-}
-
-enum ProjectionBuilder {
-    Total {
-        total: u64,
-    },
-    Flag {
-        clients: BTreeSet<String>,
-        options: AnnotationProjectionOptions,
-    },
-    Distinct {
-        names: BTreeMap<String, BTreeSet<String>>,
-        options: AnnotationProjectionOptions,
-    },
-    Unique {
-        names: BTreeMap<String, BTreeSet<String>>,
-        client_names: BTreeMap<String, String>,
-        options: AnnotationProjectionOptions,
-    },
-    Multiple {
-        names: BTreeMap<String, MultipleBucketState>,
-        options: AnnotationProjectionOptions,
-    },
-}
-
-impl ProjectionBuilder {
-    fn new(summarizer: AnnotationSummarizer, options: AnnotationProjectionOptions) -> Self {
-        match summarizer {
-            AnnotationSummarizer::Total => Self::Total { total: 0 },
-            AnnotationSummarizer::Flag => Self::Flag {
-                clients: BTreeSet::new(),
-                options,
-            },
-            AnnotationSummarizer::Distinct => Self::Distinct {
-                names: BTreeMap::new(),
-                options,
-            },
-            AnnotationSummarizer::Unique => Self::Unique {
-                names: BTreeMap::new(),
-                client_names: BTreeMap::new(),
-                options,
-            },
-            AnnotationSummarizer::Multiple => Self::Multiple {
-                names: BTreeMap::new(),
-                options,
-            },
-        }
-    }
-
-    fn apply(&mut self, event: &Annotation) -> Result<()> {
-        match self {
-            Self::Total { total } => apply_total(*total, event).map(|next| *total = next),
-            Self::Flag { clients, .. } => apply_flag(clients, event),
-            Self::Distinct { names, .. } => apply_distinct(names, event),
-            Self::Unique {
-                names,
-                client_names,
-                ..
-            } => apply_unique(names, client_names, event),
-            Self::Multiple { names, .. } => apply_multiple(names, event),
-        }
-    }
-
-    fn finish(self) -> AnnotationSummary {
-        match self {
-            Self::Total { total } => AnnotationSummary::Total(TotalAnnotationSummary { total }),
-            Self::Flag { clients, options } => {
-                AnnotationSummary::Flag(identified_summary(&clients, options))
-            }
-            Self::Distinct { names, options } => AnnotationSummary::Distinct(
-                names
-                    .into_iter()
-                    .map(|(name, clients)| (name, identified_summary(&clients, options)))
-                    .collect(),
-            ),
-            Self::Unique { names, options, .. } => AnnotationSummary::Unique(
-                names
-                    .into_iter()
-                    .map(|(name, clients)| (name, identified_summary(&clients, options)))
-                    .collect(),
-            ),
-            Self::Multiple { names, options } => AnnotationSummary::Multiple(
-                names
-                    .into_iter()
-                    .map(|(name, bucket)| (name, multiple_summary(bucket, options)))
-                    .collect(),
-            ),
-        }
-    }
-}
-
-#[derive(Default)]
-struct MultipleBucketState {
-    client_counts: BTreeMap<String, u64>,
-    total_unidentified: u64,
-}
-
-fn apply_total(current: u64, event: &Annotation) -> Result<u64> {
-    match event.action {
-        AnnotationAction::Create => Ok(current.saturating_add(1)),
-        AnnotationAction::Delete => Ok(current.saturating_sub(1)),
-    }
-}
-
-fn apply_flag(clients: &mut BTreeSet<String>, event: &Annotation) -> Result<()> {
-    let client_id = required_client_id(event)?;
-    match event.action {
-        AnnotationAction::Create => {
-            clients.insert(client_id.to_string());
-        }
-        AnnotationAction::Delete => {
-            clients.remove(client_id);
-        }
-    }
-    Ok(())
-}
-
-fn apply_distinct(
-    names: &mut BTreeMap<String, BTreeSet<String>>,
-    event: &Annotation,
-) -> Result<()> {
-    let name = required_name(event)?;
-    let client_id = required_client_id(event)?;
-
-    match event.action {
-        AnnotationAction::Create => {
-            names
-                .entry(name.to_string())
-                .or_default()
-                .insert(client_id.to_string());
-        }
-        AnnotationAction::Delete => {
-            remove_client_from_name(names, name, client_id);
-        }
-    }
-
-    Ok(())
-}
-
-fn apply_unique(
-    names: &mut BTreeMap<String, BTreeSet<String>>,
-    client_names: &mut BTreeMap<String, String>,
-    event: &Annotation,
-) -> Result<()> {
-    let name = required_name(event)?;
-    let client_id = required_client_id(event)?;
-
-    match event.action {
-        AnnotationAction::Create => {
-            if let Some(previous_name) =
-                client_names.insert(client_id.to_string(), name.to_string())
-                && previous_name != name
-            {
-                remove_client_from_name(names, &previous_name, client_id);
-            }
-            names
-                .entry(name.to_string())
-                .or_default()
-                .insert(client_id.to_string());
-        }
-        AnnotationAction::Delete => {
-            if let Some(active_name) = client_names.remove(client_id) {
-                remove_client_from_name(names, &active_name, client_id);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn apply_multiple(
-    names: &mut BTreeMap<String, MultipleBucketState>,
-    event: &Annotation,
-) -> Result<()> {
-    let name = required_name(event)?;
-    let bucket = names.entry(name.to_string()).or_default();
-
-    match event.action {
-        AnnotationAction::Create => {
-            let count = event.effective_count();
-            if let Some(client_id) = event.client_id.as_deref() {
-                validate_required_text("annotation client_id", Some(client_id))?;
-                let current = bucket
-                    .client_counts
-                    .entry(client_id.to_string())
-                    .or_default();
-                *current = current.saturating_add(count);
-            } else {
-                bucket.total_unidentified = bucket.total_unidentified.saturating_add(count);
-            }
-        }
-        AnnotationAction::Delete => {
-            if let Some(client_id) = event.client_id.as_deref() {
-                bucket.client_counts.remove(client_id);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn required_name(event: &Annotation) -> Result<&str> {
-    let name = event.name.as_deref();
-    validate_required_text("annotation name", name)?;
-    Ok(name.expect("validated annotation name must exist"))
-}
-
-fn required_client_id(event: &Annotation) -> Result<&str> {
-    let client_id = event.client_id.as_deref();
-    validate_required_text("annotation client_id", client_id)?;
-    Ok(client_id.expect("validated annotation client_id must exist"))
-}
-
-fn remove_client_from_name(
-    names: &mut BTreeMap<String, BTreeSet<String>>,
-    name: &str,
-    client_id: &str,
-) {
-    if let Some(clients) = names.get_mut(name) {
-        clients.remove(client_id);
-        if clients.is_empty() {
-            names.remove(name);
-        }
-    }
-}
-
-fn identified_summary(
-    clients: &BTreeSet<String>,
-    options: AnnotationProjectionOptions,
-) -> IdentifiedAnnotationSummary {
-    let total = clients.len() as u64;
-    let clipped = options
-        .client_id_limit
-        .is_some_and(|limit| clients.len() > limit);
-    let client_ids = match options.client_id_limit {
-        Some(limit) => clients.iter().take(limit).cloned().collect(),
-        None => clients.iter().cloned().collect(),
-    };
-
-    IdentifiedAnnotationSummary {
-        total,
-        client_ids,
-        clipped,
-    }
-}
-
-fn multiple_summary(
-    bucket: MultipleBucketState,
-    options: AnnotationProjectionOptions,
-) -> MultipleAnnotationSummary {
-    let total_client_ids = bucket.client_counts.len() as u64;
-    let total_identified = bucket.client_counts.values().copied().sum::<u64>();
-    let clipped = options
-        .client_id_limit
-        .is_some_and(|limit| bucket.client_counts.len() > limit);
-    let client_counts = match options.client_id_limit {
-        Some(limit) => bucket.client_counts.into_iter().take(limit).collect(),
-        None => bucket.client_counts,
-    };
-
-    MultipleAnnotationSummary {
-        total: total_identified.saturating_add(bucket.total_unidentified),
-        client_counts,
-        total_unidentified: bucket.total_unidentified,
-        clipped,
-        total_client_ids,
-    }
 }
 
 #[cfg(test)]
@@ -1881,6 +1748,143 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["ann:2", "ann:3"]
         );
+    }
+
+    #[tokio::test]
+    async fn memory_store_get_projection_repairs_stale_watermark() {
+        let store = MemoryAnnotationStore::new();
+
+        store
+            .append_event(stored_event(
+                "ann:1",
+                "reaction:total.v1",
+                AnnotationAction::Create,
+                None,
+                None,
+                None,
+                1,
+            ))
+            .await
+            .unwrap();
+
+        let late_event = stored_event(
+            "ann:2",
+            "reaction:total.v1",
+            AnnotationAction::Create,
+            None,
+            None,
+            None,
+            2,
+        );
+        let projection_key = MemoryAnnotationStore::event_projection_key(&late_event);
+        let channel_key =
+            MemoryAnnotationStore::channel_key(&late_event.app_id, &late_event.channel_id);
+        {
+            let mut state = store.state.write().await;
+            state
+                .events_by_projection
+                .entry(projection_key)
+                .or_default()
+                .insert(late_event.annotation_serial().clone(), late_event.clone());
+            state
+                .raw_by_channel
+                .entry(channel_key)
+                .or_default()
+                .insert(late_event.annotation_serial().clone(), late_event);
+        }
+
+        let projection = store
+            .get_projection(projection_request("reaction:total.v1"))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(projection.last_annotation_serial.unwrap().as_str(), "ann:2");
+        assert_eq!(
+            projection.summary,
+            AnnotationSummary::Total(TotalAnnotationSummary { total: 2 })
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_store_list_projections_rebuilds_cold_projection_cache() {
+        let store = MemoryAnnotationStore::new();
+        let event = stored_event(
+            "ann:1",
+            "reaction:total.v1",
+            AnnotationAction::Create,
+            None,
+            None,
+            None,
+            1,
+        );
+        let projection_key = MemoryAnnotationStore::event_projection_key(&event);
+        let channel_key = MemoryAnnotationStore::channel_key(&event.app_id, &event.channel_id);
+        {
+            let mut state = store.state.write().await;
+            state
+                .events_by_projection
+                .entry(projection_key)
+                .or_default()
+                .insert(event.annotation_serial().clone(), event.clone());
+            state
+                .raw_by_channel
+                .entry(channel_key)
+                .or_default()
+                .insert(event.annotation_serial().clone(), event);
+            state.projections.clear();
+        }
+
+        let projections = store
+            .list_projections_for_channel(AnnotationProjectionsForChannelRequest {
+                app_id: "app".to_string(),
+                channel_id: "chat".to_string(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(projections.len(), 1);
+        assert_eq!(
+            projections[0].summary,
+            AnnotationSummary::Total(TotalAnnotationSummary { total: 1 })
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_store_converges_after_out_of_order_unique_events() {
+        let store = MemoryAnnotationStore::new();
+
+        store
+            .append_event(stored_event(
+                "ann:2",
+                "reaction:unique.v1",
+                AnnotationAction::Create,
+                Some("laugh"),
+                Some("client-1"),
+                None,
+                2,
+            ))
+            .await
+            .unwrap();
+        let projection = store
+            .append_event(stored_event(
+                "ann:1",
+                "reaction:unique.v1",
+                AnnotationAction::Create,
+                Some("like"),
+                Some("client-1"),
+                None,
+                1,
+            ))
+            .await
+            .unwrap();
+
+        let AnnotationSummary::Unique(names) = projection.summary else {
+            panic!("expected unique summary");
+        };
+        assert!(!names.contains_key("like"));
+        assert_eq!(names["laugh"].client_ids, vec!["client-1".to_string()]);
+        assert_eq!(projection.last_annotation_serial.unwrap().as_str(), "ann:2");
     }
 
     #[tokio::test]

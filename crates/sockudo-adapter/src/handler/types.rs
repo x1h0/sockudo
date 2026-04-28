@@ -300,6 +300,7 @@ impl SubscriptionRequest {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build(
         channel: String,
         auth: Option<String>,

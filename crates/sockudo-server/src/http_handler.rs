@@ -9,10 +9,12 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sockudo_adapter::ConnectionHandler;
 use sockudo_adapter::channel_manager::ChannelManager;
+use sockudo_adapter::handler::annotations::{
+    DeleteAnnotationRuntimeRequest, PublishAnnotationRuntimeRequest,
+};
 use sockudo_core::annotations::{
     Annotation, AnnotationAction, AnnotationEventLookupRequest, AnnotationEventsRequest,
-    AnnotationId, AnnotationSerial, AnnotationType, RawAnnotationReplayRequest,
-    StoredAnnotationEvent,
+    AnnotationSerial, AnnotationType, RawAnnotationReplayRequest,
 };
 use sockudo_core::app::App;
 use sockudo_core::error::{HEALTH_CHECK_TIMEOUT_MS, HealthStatus};
@@ -40,9 +42,8 @@ use sockudo_core::versioned_messages::{
 use sockudo_core::websocket::SocketId;
 use sockudo_protocol::constants::EVENT_NAME_MAX_LENGTH as DEFAULT_EVENT_NAME_MAX_LENGTH;
 use sockudo_protocol::messages::{
-    ANNOTATION_EVENT_NAME, AnnotationEventAction, AnnotationEventData, AnnotationSummaryEnvelope,
-    ApiMessageData, BatchPusherApiMessage, InfoQueryParser, MESSAGE_SUMMARY_EVENT_NAME,
-    MessageData, MessageExtras, MessageSummaryData, PusherApiMessage, PusherMessage,
+    AnnotationEventAction, AnnotationEventData, ApiMessageData, BatchPusherApiMessage,
+    InfoQueryParser, MessageData, PusherApiMessage, PusherMessage,
 };
 use sockudo_protocol::versioned_messages::{
     AppendMessageRequest, DeleteMessageRequest, GetMessageResponse, ListMessageVersionsResponse,
@@ -51,11 +52,7 @@ use sockudo_protocol::versioned_messages::{
     extract_runtime_message_serial,
 };
 use sonic_rs::{Value, json};
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use sysinfo::System;
 use thiserror::Error;
 use tokio::time::timeout;
@@ -629,72 +626,6 @@ fn annotation_wire_event(annotation: &Annotation) -> AnnotationEventData {
         encoding: annotation.encoding.clone(),
         timestamp: annotation.timestamp,
     }
-}
-
-fn annotation_event_message(
-    channel: &str,
-    annotation: &Annotation,
-) -> Result<PusherMessage, AppError> {
-    Ok(PusherMessage {
-        event: Some(ANNOTATION_EVENT_NAME.to_string()),
-        channel: Some(channel.to_string()),
-        data: Some(MessageData::Json(sonic_rs::to_value(
-            &annotation_wire_event(annotation),
-        )?)),
-        name: None,
-        user_id: None,
-        tags: None,
-        sequence: None,
-        conflation_key: None,
-        message_id: None,
-        stream_id: None,
-        serial: None,
-        idempotency_key: None,
-        extras: None,
-        delta_sequence: None,
-        delta_conflation_key: None,
-    })
-}
-
-fn annotation_summary_message(
-    channel: &str,
-    message_serial: &MessageSerial,
-    annotation_type: &AnnotationType,
-    summary: &sockudo_core::annotations::AnnotationSummary,
-) -> Result<PusherMessage, AppError> {
-    let mut summary_by_type = BTreeMap::new();
-    summary_by_type.insert(
-        annotation_type.as_str().to_string(),
-        sonic_rs::to_value(summary)?,
-    );
-    Ok(PusherMessage {
-        event: Some(MESSAGE_SUMMARY_EVENT_NAME.to_string()),
-        channel: Some(channel.to_string()),
-        data: Some(MessageData::Json(sonic_rs::to_value(
-            &MessageSummaryData {
-                action: "message.summary".to_string(),
-                serial: message_serial.as_str().to_string(),
-                annotations: AnnotationSummaryEnvelope {
-                    summary: summary_by_type,
-                },
-            },
-        )?)),
-        name: None,
-        user_id: None,
-        tags: None,
-        sequence: None,
-        conflation_key: None,
-        message_id: None,
-        stream_id: None,
-        serial: None,
-        idempotency_key: None,
-        extras: Some(MessageExtras {
-            ephemeral: Some(true),
-            ..Default::default()
-        }),
-        delta_sequence: None,
-        delta_conflation_key: None,
-    })
 }
 
 fn protocol_action(
@@ -2445,51 +2376,24 @@ pub async fn publish_annotation(
         request.socket_id.as_deref(),
     )
     .await?;
-    let serial = AnnotationSerial::new(handler.next_version_serial().to_string())?;
-    let annotation = Annotation {
-        id: AnnotationId::new(uuid::Uuid::new_v4().to_string())?,
-        action: AnnotationAction::Create,
-        serial: serial.clone(),
-        message_serial: message_serial.clone(),
-        annotation_type: annotation_type.clone(),
-        name: request.name.clone(),
-        client_id: actor_client_id,
-        count: request.count,
-        data: request.data.clone(),
-        encoding: request.encoding.clone(),
-        timestamp: sockudo_core::history::now_ms(),
-    };
-    annotation.validate().map_err(AppError::from)?;
-
-    let projection = handler
-        .annotation_store()
-        .append_event(StoredAnnotationEvent {
-            app_id: path.app_id.clone(),
-            channel_id: path.channel_name.clone(),
-            annotation: annotation.clone(),
-            stored_at_ms: sockudo_core::history::now_ms(),
+    let result = handler
+        .publish_annotation_runtime(PublishAnnotationRuntimeRequest {
+            app,
+            channel: path.channel_name,
+            message_serial,
+            annotation_type,
+            name: request.name,
+            client_id: actor_client_id,
+            count: request.count,
+            data: request.data,
+            encoding: request.encoding,
         })
-        .await?;
-
-    let raw_message = annotation_event_message(&path.channel_name, &annotation)?;
-    handler
-        .broadcast_to_channel_force_full(&app, &path.channel_name, raw_message, None, None)
-        .await?;
-
-    let summary_message = annotation_summary_message(
-        &path.channel_name,
-        &message_serial,
-        &annotation_type,
-        &projection.summary,
-    )?;
-    handler
-        .broadcast_to_channel_force_full(&app, &path.channel_name, summary_message, None, None)
         .await?;
 
     Ok((
         StatusCode::OK,
         Json(PublishAnnotationResponse {
-            annotation_serial: serial.as_str().to_string(),
+            annotation_serial: result.annotation_serial.as_str().to_string(),
         }),
     )
         .into_response())
@@ -2567,52 +2471,20 @@ pub async fn delete_annotation(
             .into_response());
     }
 
-    let delete_serial = AnnotationSerial::new(handler.next_version_serial().to_string())?;
-    let annotation = Annotation {
-        id: target.annotation.id.clone(),
-        action: AnnotationAction::Delete,
-        serial: delete_serial.clone(),
-        message_serial: message_serial.clone(),
-        annotation_type: target.annotation.annotation_type.clone(),
-        name: target.annotation.name.clone(),
-        client_id: target.annotation.client_id.clone(),
-        count: target.annotation.count,
-        data: None,
-        encoding: None,
-        timestamp: sockudo_core::history::now_ms(),
-    };
-    annotation.validate().map_err(AppError::from)?;
-
-    let projection = handler
-        .annotation_store()
-        .append_event(StoredAnnotationEvent {
-            app_id: path.app_id.clone(),
-            channel_id: path.channel_name.clone(),
-            annotation: annotation.clone(),
-            stored_at_ms: sockudo_core::history::now_ms(),
+    let result = handler
+        .delete_annotation_runtime(DeleteAnnotationRuntimeRequest {
+            app,
+            channel: path.channel_name,
+            message_serial,
+            target_serial,
         })
-        .await?;
-
-    let raw_message = annotation_event_message(&path.channel_name, &annotation)?;
-    handler
-        .broadcast_to_channel_force_full(&app, &path.channel_name, raw_message, None, None)
-        .await?;
-
-    let summary_message = annotation_summary_message(
-        &path.channel_name,
-        &message_serial,
-        &target.annotation.annotation_type,
-        &projection.summary,
-    )?;
-    handler
-        .broadcast_to_channel_force_full(&app, &path.channel_name, summary_message, None, None)
         .await?;
 
     Ok((
         StatusCode::OK,
         Json(DeleteAnnotationResponse {
-            annotation_serial: delete_serial.as_str().to_string(),
-            deleted_annotation_serial: target_serial.as_str().to_string(),
+            annotation_serial: result.annotation_serial.as_str().to_string(),
+            deleted_annotation_serial: result.deleted_annotation_serial.as_str().to_string(),
         }),
     )
         .into_response())
@@ -3712,6 +3584,10 @@ mod tests {
     use sockudo_adapter::local_adapter::LocalAdapter;
     use sockudo_app::memory_app_manager::MemoryAppManager;
     use sockudo_cache::memory_cache_manager::MemoryCacheManager;
+    use sockudo_core::annotations::{
+        AnnotationId, AnnotationProjectionRequest, AnnotationSummary, StoredAnnotationEvent,
+        TotalAnnotationSummary,
+    };
     use sockudo_core::app::AppManager;
     use sockudo_core::app::{
         App, AppChannelsPolicy, AppHistoryConfig, AppPolicy, ChannelNamespace,
@@ -6452,6 +6328,97 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn annotation_publish_and_delete_update_summary_projection() {
+        let store = Arc::new(MemoryVersionStore::new());
+        let handler = test_versioned_handler_with_store(100, store.clone());
+        let app = test_app();
+
+        store
+            .append_version(test_versioned_record(
+                "msg:1",
+                "00000000000000000001:test:00000000000000000001",
+                10,
+                1,
+                "hello",
+            ))
+            .await
+            .unwrap();
+
+        let publish_response = publish_annotation(
+            Path(VersionMutationPath {
+                app_id: "app-1".to_string(),
+                channel_name: "versioned-room".to_string(),
+                message_serial: "msg:1".to_string(),
+            }),
+            Extension(app.clone()),
+            State(handler.clone()),
+            Json(PublishAnnotationRequest {
+                annotation_type: "reactions:total.v1".to_string(),
+                name: None,
+                client_id: None,
+                socket_id: None,
+                count: None,
+                data: Some(json!({"emoji": "thumbsup"})),
+                encoding: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_response();
+
+        assert_eq!(publish_response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(publish_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = sonic_rs::from_slice(&body).unwrap();
+        let annotation_serial = json["annotationSerial"].as_str().unwrap().to_string();
+
+        let projection_request = AnnotationProjectionRequest {
+            app_id: "app-1".to_string(),
+            channel_id: "versioned-room".to_string(),
+            message_serial: MessageSerial::new("msg:1").unwrap(),
+            annotation_type: AnnotationType::new("reactions:total.v1").unwrap(),
+        };
+        let projection = handler
+            .annotation_store()
+            .get_projection(projection_request.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            projection.summary,
+            AnnotationSummary::Total(TotalAnnotationSummary { total: 1 })
+        );
+
+        let delete_response = delete_annotation(
+            Path(AnnotationMutationPath {
+                app_id: "app-1".to_string(),
+                channel_name: "versioned-room".to_string(),
+                message_serial: "msg:1".to_string(),
+                annotation_serial,
+            }),
+            Query(HashMap::new()),
+            Extension(app),
+            State(handler.clone()),
+        )
+        .await
+        .unwrap()
+        .into_response();
+
+        assert_eq!(delete_response.status(), StatusCode::OK);
+        let projection = handler
+            .annotation_store()
+            .get_projection(projection_request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            projection.summary,
+            AnnotationSummary::Total(TotalAnnotationSummary { total: 0 })
+        );
     }
 
     #[tokio::test]

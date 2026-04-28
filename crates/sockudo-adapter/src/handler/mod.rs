@@ -1,4 +1,5 @@
 // src/adapter/handler/mod.rs
+pub mod annotations;
 pub mod authentication;
 pub mod connection_management;
 mod core;

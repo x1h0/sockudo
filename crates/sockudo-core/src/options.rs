@@ -1159,18 +1159,12 @@ pub struct VersionedMessagesConfig {
     pub max_purge_per_tick: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AnnotationsConfig {
     /// Whether Sockudo-native annotation APIs and realtime annotation protocol
     /// surfaces are enabled. Disabled by default while the feature is opt-in.
     pub enabled: bool,
-}
-
-impl Default for AnnotationsConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

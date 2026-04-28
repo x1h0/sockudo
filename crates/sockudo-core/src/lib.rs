@@ -1,3 +1,4 @@
+pub mod annotation_summarizers;
 pub mod annotations;
 pub mod app;
 pub mod auth;
