@@ -165,8 +165,7 @@ impl QueueInterface for IggyQueueManager {
 
                 match polled {
                     Ok(messages) => {
-                        let partition_id =
-                            (messages.partition_id != 0).then_some(messages.partition_id);
+                        let partition_id = Some(messages.partition_id);
                         for message in messages.messages {
                             match sonic_rs::from_slice::<JobData>(&message.payload) {
                                 Ok(job) => {
@@ -370,10 +369,10 @@ fn validate_config(config: &IggyConfig) -> Result<()> {
             "Apache Iggy partitions_count must be greater than 0".to_string(),
         ));
     }
-    if config.partition_id == 0 || config.partition_id > config.partitions_count {
+    if config.partition_id >= config.partitions_count {
         return Err(Error::Queue(format!(
-            "Apache Iggy partition_id must be between 1 and partitions_count ({})",
-            config.partitions_count
+            "Apache Iggy partition_id must be between 0 and partitions_count - 1 ({})",
+            config.partitions_count - 1
         )));
     }
     if config.poll_batch_size == 0 {

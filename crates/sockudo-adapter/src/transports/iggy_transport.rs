@@ -433,7 +433,8 @@ async fn publish_message<T: serde::Serialize>(
         .payload(Bytes::from(payload))
         .build()
         .map_err(to_iggy_error)?];
-    let partitioning = Partitioning::partition_id(config.partition_id);
+    let partitioning = Partitioning::messages_key(topic.as_bytes())
+        .unwrap_or_else(|_| Partitioning::partition_id(config.partition_id));
     with_timeout(
         config,
         client.send_messages(
@@ -502,10 +503,10 @@ fn validate_config(config: &IggyConfig) -> Result<()> {
             "Apache Iggy partitions_count must be greater than 0".to_string(),
         ));
     }
-    if config.partition_id == 0 || config.partition_id > config.partitions_count {
+    if config.partition_id >= config.partitions_count {
         return Err(Error::Config(format!(
-            "Apache Iggy partition_id must be between 1 and partitions_count ({})",
-            config.partitions_count
+            "Apache Iggy partition_id must be between 0 and partitions_count - 1 ({})",
+            config.partitions_count - 1
         )));
     }
     if config.poll_batch_size == 0 {

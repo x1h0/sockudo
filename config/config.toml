@@ -50,7 +50,7 @@ request_timeout_ms = 5000
 poll_interval_ms = 50
 poll_batch_size = 100
 partitions_count = 1
-partition_id = 1
+partition_id = 0
 auto_create = true
 start_from_latest = true
 
@@ -160,7 +160,7 @@ request_timeout_ms = 5000
 poll_interval_ms = 50
 poll_batch_size = 100
 partitions_count = 1
-partition_id = 1
+partition_id = 0
 auto_create = true
 
 [rate_limiter]

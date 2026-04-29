@@ -1966,7 +1966,7 @@ impl Default for IggyConfig {
             poll_interval_ms: 50,
             poll_batch_size: 100,
             partitions_count: 1,
-            partition_id: 1,
+            partition_id: 0,
             auto_create: true,
             start_from_latest: true,
             nodes_number: None,

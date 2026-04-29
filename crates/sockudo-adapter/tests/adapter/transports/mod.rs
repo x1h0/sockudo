@@ -12,3 +12,6 @@ mod nats_transport_test;
 
 #[cfg(all(test, feature = "nats"))]
 mod nats_inbox_test;
+
+#[cfg(all(test, feature = "iggy"))]
+mod iggy_transport_live_test;
