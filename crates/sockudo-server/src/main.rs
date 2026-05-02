@@ -49,8 +49,8 @@ use crate::http_handler::{
     channel_history_reset, channel_history_state, channel_message, channel_message_annotations,
     channel_message_versions, channel_presence_history, channel_presence_history_reset,
     channel_presence_history_snapshot, channel_presence_history_state, channel_users, channels,
-    delete_annotation, delete_message, events, fallback_404, metrics, publish_annotation, stats,
-    terminate_user_connections, up, update_message, usage,
+    delete_annotation, delete_message, events, fallback_404, live, metrics, publish_annotation,
+    stats, terminate_user_connections, up, update_message, usage,
 };
 use crate::presence_history::create_presence_history_store;
 use sockudo_adapter::factory::AdapterFactory;
@@ -1560,6 +1560,7 @@ impl SockudoServer {
             .merge(api_router)
             .route("/up", get(up))
             .route("/up/{appId}", get(up))
+            .route("/live", get(live))
             .layer(DefaultBodyLimit::max(body_limit_bytes))
             .layer(cors);
 

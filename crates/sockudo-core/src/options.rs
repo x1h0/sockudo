@@ -428,6 +428,9 @@ pub struct ServerOptions {
     pub event_name_filtering: EventNameFilteringConfig,
     pub versioned_messages: VersionedMessagesConfig,
     pub annotations: AnnotationsConfig,
+    /// Timeout in milliseconds for each subsystem check in the `/up` health endpoint.
+    /// Applies to adapter, cache, queue, and app manager checks independently.
+    pub health_check_timeout_ms: u64,
 }
 
 // --- Configuration Sub-Structs ---
@@ -1834,6 +1837,7 @@ impl Default for ServerOptions {
             event_name_filtering: EventNameFilteringConfig::default(),
             versioned_messages: VersionedMessagesConfig::default(),
             annotations: AnnotationsConfig::default(),
+            health_check_timeout_ms: 400,
         }
     }
 }
@@ -3245,6 +3249,10 @@ impl ServerOptions {
             "CLUSTER_HEALTH_CLEANUP_INTERVAL",
             self.cluster_health.cleanup_interval_ms,
         );
+
+        // Health check endpoint timeout
+        self.health_check_timeout_ms =
+            parse_env::<u64>("HEALTH_CHECK_TIMEOUT_MS", self.health_check_timeout_ms);
 
         // Tag filtering configuration
         self.tag_filtering.enabled =
