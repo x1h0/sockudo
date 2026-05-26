@@ -2,6 +2,8 @@ name: Actions Smoke
 
 on:
   workflow_dispatch: {}
+  repository_dispatch:
+    types: [actions-smoke]
   push:
     branches: [master]
 
