@@ -1651,6 +1651,7 @@ pub struct MetricsConfig {
     pub driver: MetricsDriver,
     pub host: String,
     pub prometheus: PrometheusConfig,
+    pub tcp_exporter: MetricsTcpExporterConfig,
     pub port: u16,
 }
 
@@ -1658,6 +1659,15 @@ pub struct MetricsConfig {
 #[serde(default)]
 pub struct PrometheusConfig {
     pub prefix: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MetricsTcpExporterConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub buffer_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2442,6 +2452,7 @@ impl Default for MetricsConfig {
             driver: MetricsDriver::default(),
             host: "0.0.0.0".to_string(),
             prometheus: PrometheusConfig::default(),
+            tcp_exporter: MetricsTcpExporterConfig::default(),
             port: 9601,
         }
     }
@@ -2451,6 +2462,17 @@ impl Default for PrometheusConfig {
     fn default() -> Self {
         Self {
             prefix: "sockudo_".to_string(),
+        }
+    }
+}
+
+impl Default for MetricsTcpExporterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: "127.0.0.1".to_string(),
+            port: 5000,
+            buffer_size: Some(1024),
         }
     }
 }
@@ -2796,6 +2818,30 @@ mod tests {
         }
 
         assert_eq!(options.push.queue_driver, PushQueueDriver::RedisCluster);
+    }
+
+    #[tokio::test]
+    async fn websocket_rate_limit_trust_hops_overrides_from_env() {
+        let previous = std::env::var("RATE_LIMITER_WS_TRUST_HOPS").ok();
+        // SAFETY: This test controls the environment variable lifecycle for a
+        // single key and restores the prior value before it returns.
+        unsafe { std::env::set_var("RATE_LIMITER_WS_TRUST_HOPS", "2") };
+
+        let mut options = ServerOptions::default();
+        options.override_from_env().await.unwrap();
+
+        if let Some(previous) = previous {
+            // SAFETY: Restoring the pre-test value for the same key.
+            unsafe { std::env::set_var("RATE_LIMITER_WS_TRUST_HOPS", previous) };
+        } else {
+            // SAFETY: Removing the test-only environment variable before exit.
+            unsafe { std::env::remove_var("RATE_LIMITER_WS_TRUST_HOPS") };
+        }
+
+        assert_eq!(
+            options.rate_limiter.websocket_rate_limit.trust_hops,
+            Some(2)
+        );
     }
 
     #[test]
@@ -3214,6 +3260,18 @@ impl ServerOptions {
         if let Ok(val) = std::env::var("METRICS_PROMETHEUS_PREFIX") {
             self.metrics.prometheus.prefix = val;
         }
+        self.metrics.tcp_exporter.enabled = parse_bool_env(
+            "METRICS_TCP_EXPORTER_ENABLED",
+            self.metrics.tcp_exporter.enabled,
+        );
+        if let Ok(val) = std::env::var("METRICS_TCP_EXPORTER_HOST") {
+            self.metrics.tcp_exporter.host = val;
+        }
+        self.metrics.tcp_exporter.port =
+            parse_env::<u16>("METRICS_TCP_EXPORTER_PORT", self.metrics.tcp_exporter.port);
+        if let Some(buffer_size) = parse_env_optional::<usize>("METRICS_TCP_EXPORTER_BUFFER_SIZE") {
+            self.metrics.tcp_exporter.buffer_size = Some(buffer_size);
+        }
 
         // --- HTTP API ---
         self.http_api.usage_enabled =
@@ -3241,6 +3299,9 @@ impl ServerOptions {
             "RATE_LIMITER_WS_WINDOW_SECONDS",
             self.rate_limiter.websocket_rate_limit.window_seconds,
         );
+        if let Some(hops) = parse_env_optional::<u32>("RATE_LIMITER_WS_TRUST_HOPS") {
+            self.rate_limiter.websocket_rate_limit.trust_hops = Some(hops);
+        }
         if let Ok(prefix) = std::env::var("RATE_LIMITER_REDIS_PREFIX") {
             self.rate_limiter.redis.prefix = Some(prefix);
         }
