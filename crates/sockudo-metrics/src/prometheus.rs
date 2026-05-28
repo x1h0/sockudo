@@ -1681,20 +1681,18 @@ impl MetricsInterface for PrometheusMetricsDriver {
         );
     }
 
-    fn update_active_channels(&self, app_id: &str, channel_type: &str, count: i64) {
-        let tags = vec![
-            app_id.to_string(),
-            self.port.to_string(),
-            channel_type.to_string(),
-        ];
+    fn mark_channel_activated(&self, app_id: &str, channel_type: &str) {
+        let port = self.port.to_string();
         self.active_channels
-            .with_label_values(&tags)
-            .set(count as f64);
+            .with_label_values(&[app_id, &port, channel_type])
+            .inc();
+    }
 
-        debug!(
-            "Metrics: Active channels updated for app {}, channel type: {}, count: {}",
-            app_id, channel_type, count
-        );
+    fn mark_channel_deactivated(&self, app_id: &str, channel_type: &str) {
+        let port = self.port.to_string();
+        self.active_channels
+            .with_label_values(&[app_id, &port, channel_type])
+            .dec();
     }
 
     fn mark_api_message(

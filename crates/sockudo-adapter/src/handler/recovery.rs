@@ -742,7 +742,7 @@ mod tests {
         }
         fn mark_channel_subscription(&self, _app_id: &str, _channel_type: &str) {}
         fn mark_channel_unsubscription(&self, _app_id: &str, _channel_type: &str) {}
-        fn update_active_channels(&self, _app_id: &str, _channel_type: &str, _count: i64) {}
+
         fn mark_api_message(
             &self,
             _app_id: &str,

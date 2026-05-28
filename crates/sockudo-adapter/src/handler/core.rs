@@ -98,13 +98,7 @@ impl ConnectionHandler {
 
             // Update active channel count if this was the last connection to the channel
             if current_sub_count == 0 {
-                super::sync_active_channel_count(
-                    &self.connection_manager,
-                    metrics,
-                    &app_config.id,
-                    channel_type_str,
-                )
-                .await;
+                metrics.mark_channel_deactivated(&app_config.id, channel_type_str);
             }
         }
 
@@ -604,19 +598,17 @@ impl ConnectionHandler {
 
         match ChannelManager::batch_unsubscribe(&self.connection_manager, operations).await {
             Ok(results) => {
-                // Collect channel types that became empty so we can sync the gauge once per type
-                let mut types_to_sync: HashSet<String> = HashSet::new();
-
                 // Process webhook events for each successful unsubscribe
                 for (channel_name, result) in &results {
                     match result {
                         Ok((was_removed, remaining_connections)) => {
-                            if *remaining_connections == 0 {
-                                types_to_sync.insert(
+                            if *remaining_connections == 0
+                                && let Some(ref metrics) = self.metrics
+                            {
+                                let channel_type =
                                     sockudo_core::channel::ChannelType::from_name(channel_name)
-                                        .as_str()
-                                        .to_string(),
-                                );
+                                        .as_str();
+                                metrics.mark_channel_deactivated(&app_config.id, channel_type);
                             }
                             if *was_removed {
                                 self.handle_post_unsubscribe_webhooks(
@@ -635,18 +627,6 @@ impl ConnectionHandler {
                                 socket_id, channel_name, e
                             );
                         }
-                    }
-                }
-
-                if let Some(ref metrics) = self.metrics {
-                    for channel_type in &types_to_sync {
-                        super::sync_active_channel_count(
-                            &self.connection_manager,
-                            metrics,
-                            &app_config.id,
-                            channel_type,
-                        )
-                        .await;
                     }
                 }
             }

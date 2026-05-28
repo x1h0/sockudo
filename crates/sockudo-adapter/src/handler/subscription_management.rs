@@ -214,13 +214,7 @@ impl ConnectionHandler {
 
             // Sync active channel gauge if this is the first connection to the channel
             if subscription_result.channel_connections == Some(1) {
-                super::sync_active_channel_count(
-                    &self.connection_manager,
-                    metrics,
-                    &app_config.id,
-                    channel_type_str,
-                )
-                .await;
+                metrics.mark_channel_activated(&app_config.id, channel_type_str);
             }
         }
         let t_after_metrics = t_start.elapsed().as_micros();

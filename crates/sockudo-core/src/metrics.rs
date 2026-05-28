@@ -45,8 +45,11 @@ pub trait MetricsInterface: Send + Sync {
     /// Track a channel unsubscription
     fn mark_channel_unsubscription(&self, app_id: &str, channel_type: &str);
 
-    /// Update the count of active channels
-    fn update_active_channels(&self, app_id: &str, channel_type: &str, count: i64);
+    /// Track a channel activation
+    fn mark_channel_activated(&self, _app_id: &str, _channel_type: &str) {}
+
+    /// Track a channel deactivation
+    fn mark_channel_deactivated(&self, _app_id: &str, _channel_type: &str) {}
 
     /// Handle a new API message event being received and sent out
     fn mark_api_message(
