@@ -824,33 +824,3 @@ impl ConnectionHandler {
         debug!("Socket {} cleanup completed", socket_id);
     }
 }
-
-/// Sync the active channel gauge for a given channel type by recounting live channels
-/// from the DashMap.
-pub async fn sync_active_channel_count(
-    connection_manager: &Arc<dyn ConnectionManager + Send + Sync>,
-    metrics: &Arc<dyn MetricsInterface + Send + Sync>,
-    app_id: &str,
-    channel_type: &str,
-) {
-    let channels_map = match connection_manager
-        .get_channels_with_socket_count(app_id)
-        .await
-    {
-        Ok(map) => map,
-        Err(e) => {
-            error!("Failed to get channels for metrics sync: {}", e);
-            return;
-        }
-    };
-
-    let count = channels_map
-        .iter()
-        .filter(|(name, cnt)| {
-            **cnt > 0
-                && sockudo_core::channel::ChannelType::from_name(name).as_str() == channel_type
-        })
-        .count() as i64;
-
-    metrics.update_active_channels(app_id, channel_type, count);
-}
