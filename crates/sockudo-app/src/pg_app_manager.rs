@@ -99,7 +99,7 @@ impl PgSQLAppManager {
             self.config.table_name
         );
 
-        sqlx::query(&create_table_query)
+        sqlx::query(sqlx::AssertSqlSafe(create_table_query.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|e| Error::Internal(format!("Failed to create PostgreSQL table: {e}")))?;
@@ -119,7 +119,7 @@ impl PgSQLAppManager {
                 self.config.table_name, column_name, column_type
             );
 
-            sqlx::query(&add_column_query)
+            sqlx::query(sqlx::AssertSqlSafe(add_column_query.as_str()))
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {
@@ -168,7 +168,7 @@ impl PgSQLAppManager {
             self.config.table_name
         );
 
-        let app_result = sqlx::query_as::<_, AppRow>(&query)
+        let app_result = sqlx::query_as::<_, AppRow>(sqlx::AssertSqlSafe(query.as_str()))
             .bind(app_id)
             .fetch_optional(&self.pool)
             .await
@@ -216,7 +216,7 @@ impl PgSQLAppManager {
             self.config.table_name
         );
 
-        let app_result = sqlx::query_as::<_, AppRow>(&query)
+        let app_result = sqlx::query_as::<_, AppRow>(sqlx::AssertSqlSafe(query.as_str()))
             .bind(key)
             .fetch_optional(&self.pool)
             .await
@@ -253,7 +253,7 @@ impl PgSQLAppManager {
             self.config.table_name
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(&app.id)
             .bind(&app.key)
             .bind(&app.secret)
@@ -331,7 +331,7 @@ impl PgSQLAppManager {
             self.config.table_name
         );
 
-        let result = sqlx::query(&query)
+        let result = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(&app.key)
             .bind(&app.secret)
             .bind(policy.limits.max_connections as i32)
@@ -395,7 +395,7 @@ impl PgSQLAppManager {
 
         let query = format!("DELETE FROM {} WHERE id = $1", self.config.table_name);
 
-        let result = sqlx::query(&query)
+        let result = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(app_id)
             .execute(&self.pool)
             .await
@@ -443,7 +443,7 @@ impl PgSQLAppManager {
             self.config.table_name
         );
 
-        let app_rows = sqlx::query_as::<_, AppRow>(&query)
+        let app_rows = sqlx::query_as::<_, AppRow>(sqlx::AssertSqlSafe(query.as_str()))
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {

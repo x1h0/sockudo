@@ -56,22 +56,80 @@ impl ConnectionHandler {
 
         let key = active_stream_key(app_id, channel, record.message_serial().as_str());
         if record_ai_status(record) == Some("streaming") {
+            let was_absent = !self.cache_manager().has(&key).await?;
             let entry = ActiveAiStreamEntry::from_record(record, now_ms());
             let value = sonic_rs::to_string(&entry).map_err(Error::from)?;
             self.cache_manager()
                 .set(&key, &value, active_stream_ttl_seconds(self))
                 .await?;
-        } else if let Err(error) = self.cache_manager().remove(&key).await {
-            debug!(
-                app_id = %app_id,
-                channel = %channel,
-                message_serial = %record.message_serial().as_str(),
-                error = %error,
-                "AI active stream registry entry was already absent"
-            );
+            if was_absent {
+                self.cache_manager()
+                    .increment_by(
+                        &active_stream_count_key(app_id, channel),
+                        1,
+                        active_stream_ttl_seconds(self),
+                    )
+                    .await?;
+            }
+        } else {
+            let was_present = self.cache_manager().has(&key).await?;
+            if let Err(error) = self.cache_manager().remove(&key).await {
+                debug!(
+                    app_id = %app_id,
+                    channel = %channel,
+                    message_serial = %record.message_serial().as_str(),
+                    error = %error,
+                    "AI active stream registry entry was already absent"
+                );
+            } else if was_present {
+                let next = self
+                    .cache_manager()
+                    .increment_by(
+                        &active_stream_count_key(app_id, channel),
+                        -1,
+                        active_stream_ttl_seconds(self),
+                    )
+                    .await?;
+                if next < 0 {
+                    self.cache_manager()
+                        .set(
+                            &active_stream_count_key(app_id, channel),
+                            "0",
+                            active_stream_ttl_seconds(self),
+                        )
+                        .await?;
+                }
+            }
         }
 
         Ok(())
+    }
+
+    pub async fn ai_active_stream_count(&self, app_id: &str, channel: &str) -> Result<usize> {
+        let key = active_stream_count_key(app_id, channel);
+        if self.cache_manager().get(&key).await?.is_none() {
+            let bootstrapped = self
+                .version_store()
+                .latest_by_history(app_id, channel)
+                .await?
+                .iter()
+                .filter(|record| record_ai_status(record) == Some("streaming"))
+                .count();
+            self.cache_manager()
+                .set(
+                    &key,
+                    &bootstrapped.to_string(),
+                    active_stream_ttl_seconds(self),
+                )
+                .await?;
+        }
+
+        Ok(self
+            .cache_manager()
+            .get(&key)
+            .await?
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0))
     }
 
     pub async fn sweep_ai_stream_orphans_once(&self, now_ms: i64) -> Result<usize> {
@@ -85,31 +143,40 @@ impl ConnectionHandler {
             .rollup
             .orphan_ttl_ms
             .min(i64::MAX as u64) as i64;
-        let entries = self
-            .cache_manager()
-            .scan_prefix(ACTIVE_STREAM_PREFIX, ORPHAN_SWEEP_SCAN_LIMIT)
-            .await?;
         let mut closed = 0usize;
+        let mut cursor = None;
 
-        for (key, value) in entries {
-            let entry: ActiveAiStreamEntry = match sonic_rs::from_str(&value) {
-                Ok(entry) => entry,
-                Err(error) => {
-                    warn!(
-                        key = %key,
-                        error = %error,
-                        "invalid AI active stream registry entry"
-                    );
+        loop {
+            let page = self
+                .cache_manager()
+                .scan_prefix_page(ACTIVE_STREAM_PREFIX, cursor, ORPHAN_SWEEP_SCAN_LIMIT)
+                .await?;
+
+            for (key, value) in page.entries {
+                let entry: ActiveAiStreamEntry = match sonic_rs::from_str(&value) {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        warn!(
+                            key = %key,
+                            error = %error,
+                            "invalid AI active stream registry entry"
+                        );
+                        continue;
+                    }
+                };
+
+                if now_ms.saturating_sub(entry.last_seen_ms) < orphan_ttl_ms {
                     continue;
                 }
-            };
 
-            if now_ms.saturating_sub(entry.last_seen_ms) < orphan_ttl_ms {
-                continue;
+                if self.try_close_ai_stream_orphan(&entry, now_ms).await? {
+                    closed += 1;
+                }
             }
 
-            if self.try_close_ai_stream_orphan(&entry, now_ms).await? {
-                closed += 1;
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
             }
         }
 
@@ -243,6 +310,10 @@ impl ConnectionHandler {
 
 fn active_stream_key(app_id: &str, channel: &str, message_serial: &str) -> String {
     format!("{ACTIVE_STREAM_PREFIX}{app_id}:{channel}:{message_serial}")
+}
+
+fn active_stream_count_key(app_id: &str, channel: &str) -> String {
+    format!("ai_transport:active_stream_count:{app_id}:{channel}")
 }
 
 fn orphan_claim_key(app_id: &str, channel: &str, message_serial: &str) -> String {

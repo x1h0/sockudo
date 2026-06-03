@@ -92,16 +92,6 @@ fn has_ai_streaming_status(message: &PusherMessage) -> bool {
         == Some("streaming")
 }
 
-fn record_has_ai_streaming_status(record: &StoredVersionRecord) -> bool {
-    record
-        .message
-        .extras
-        .as_ref()
-        .and_then(|extras| extras.ai_transport_headers())
-        .and_then(|headers| headers.status())
-        == Some("streaming")
-}
-
 impl ConnectionHandler {
     async fn resolve_actor_client_id(
         &self,
@@ -381,13 +371,8 @@ impl ConnectionHandler {
                         }
 
                         if has_ai_streaming_status(&message) {
-                            let open_count = self
-                                .version_store()
-                                .latest_by_history(&app_config.id, channel)
-                                .await?
-                                .iter()
-                                .filter(|record| record_has_ai_streaming_status(record))
-                                .count();
+                            let open_count =
+                                self.ai_active_stream_count(&app_config.id, channel).await?;
                             let max_open = self
                                 .server_options()
                                 .ai_transport
@@ -507,7 +492,6 @@ impl ConnectionHandler {
                             }
                         });
                     }
-                    #[cfg(feature = "ai-transport")]
                     self.record_ai_stream_activity(&app_config.id, channel, &record)
                         .await?;
                     publish_ack = Some(PublishAck {

@@ -4,21 +4,39 @@ use sockudo_core::app::App;
 use sockudo_core::error::Result;
 use sockudo_core::metrics::MetricsInterface;
 use sockudo_core::presence_history::{
-    PresenceHistoryEventCause, PresenceHistoryEventKind, PresenceHistoryStore,
-    PresenceHistoryTransitionRecord,
+    PresenceHistoryEventCause, PresenceHistoryEventKind, PresenceHistoryRetentionPolicy,
+    PresenceHistoryStore, PresenceHistoryTransitionRecord,
 };
 use sockudo_core::websocket::SocketId;
 use sockudo_protocol::messages::PusherMessage;
 use sockudo_webhook::WebhookIntegration;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use tokio::sync::{Mutex, Notify};
+use tokio::time::{Duration, Instant};
 use tracing::{debug, error, warn};
+
+const MAX_PENDING_PRESENCE_REMOVALS: usize = 100_000;
 
 /// Lock key for presence operations to prevent TOCTOU races
 /// Format: "app_id:channel:user_id"
 fn presence_lock_key(app_id: &str, channel: &str, user_id: &str) -> String {
     format!("{}:{}:{}", app_id, channel, user_id)
+}
+
+struct PendingRemovalTask {
+    connection_manager: Arc<dyn ConnectionManager + Send + Sync>,
+    presence_history_store: Arc<dyn PresenceHistoryStore + Send + Sync>,
+    presence_history_enabled: bool,
+    webhook_integration: Option<Arc<WebhookIntegration>>,
+    metrics: Option<Arc<dyn MetricsInterface + Send + Sync>>,
+    app_config: App,
+    channel: String,
+    user_id: String,
+    socket_for_leave: Option<String>,
+    generation: u64,
+    retention: Option<PresenceHistoryRetentionPolicy>,
 }
 
 /// Centralized presence channel management functionality
@@ -29,6 +47,10 @@ pub struct PresenceManager {
     /// Maps "app_id:channel:user_id" -> async mutex for true per-key exclusivity
     presence_locks: DashMap<String, Arc<Mutex<()>>>,
     removal_generation: AtomicU64,
+    pending_removal_deadlines: Arc<Mutex<BTreeMap<Instant, VecDeque<PendingRemovalTask>>>>,
+    pending_removal_count: Arc<AtomicUsize>,
+    pending_removal_worker_started: AtomicBool,
+    pending_removal_notify: Arc<Notify>,
 }
 
 impl Default for PresenceManager {
@@ -42,6 +64,10 @@ impl PresenceManager {
         Self {
             presence_locks: DashMap::new(),
             removal_generation: AtomicU64::new(1),
+            pending_removal_deadlines: Arc::new(Mutex::new(BTreeMap::new())),
+            pending_removal_count: Arc::new(AtomicUsize::new(0)),
+            pending_removal_worker_started: AtomicBool::new(false),
+            pending_removal_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -50,6 +76,155 @@ impl PresenceManager {
             .entry(lock_key.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    fn ensure_pending_removal_worker(&self) {
+        if self
+            .pending_removal_worker_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            let deadlines = Arc::clone(&self.pending_removal_deadlines);
+            let count = Arc::clone(&self.pending_removal_count);
+            let notify = Arc::clone(&self.pending_removal_notify);
+            tokio::spawn(async move {
+                Self::run_pending_removal_worker(deadlines, count, notify).await;
+            });
+        }
+    }
+
+    async fn schedule_pending_removal(
+        &self,
+        delay_seconds: u64,
+        task: PendingRemovalTask,
+    ) -> Result<()> {
+        if self.pending_removal_count.fetch_add(1, Ordering::AcqRel)
+            >= MAX_PENDING_PRESENCE_REMOVALS
+        {
+            self.pending_removal_count.fetch_sub(1, Ordering::AcqRel);
+            return Err(sockudo_core::error::Error::OverCapacity);
+        }
+
+        self.ensure_pending_removal_worker();
+        let deadline = Instant::now() + Duration::from_secs(delay_seconds);
+        {
+            let mut deadlines = self.pending_removal_deadlines.lock().await;
+            deadlines.entry(deadline).or_default().push_back(task);
+        }
+        self.pending_removal_notify.notify_one();
+        Ok(())
+    }
+
+    async fn run_pending_removal_worker(
+        deadlines: Arc<Mutex<BTreeMap<Instant, VecDeque<PendingRemovalTask>>>>,
+        count: Arc<AtomicUsize>,
+        notify: Arc<Notify>,
+    ) {
+        loop {
+            let next_deadline = {
+                let deadlines = deadlines.lock().await;
+                deadlines.keys().next().copied()
+            };
+
+            let Some(deadline) = next_deadline else {
+                notify.notified().await;
+                continue;
+            };
+
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {}
+                _ = notify.notified() => continue,
+            }
+
+            let due_tasks = Self::take_due_pending_removals(&deadlines, Instant::now()).await;
+            for task in due_tasks {
+                count.fetch_sub(1, Ordering::AcqRel);
+                Self::process_pending_removal(task).await;
+            }
+        }
+    }
+
+    async fn take_due_pending_removals(
+        deadlines: &Mutex<BTreeMap<Instant, VecDeque<PendingRemovalTask>>>,
+        now: Instant,
+    ) -> Vec<PendingRemovalTask> {
+        let mut deadlines = deadlines.lock().await;
+        let due_deadlines = deadlines
+            .keys()
+            .copied()
+            .take_while(|deadline| *deadline <= now)
+            .collect::<Vec<_>>();
+        let mut tasks = Vec::new();
+        for deadline in due_deadlines {
+            if let Some(mut bucket) = deadlines.remove(&deadline) {
+                tasks.extend(bucket.drain(..));
+            }
+        }
+        tasks
+    }
+
+    async fn process_pending_removal(task: PendingRemovalTask) {
+        let still_connected = Self::user_has_other_connections_in_presence_channel(
+            Arc::clone(&task.connection_manager),
+            &task.app_config.id,
+            &task.channel,
+            &task.user_id,
+            None,
+        )
+        .await
+        .unwrap_or(false);
+        if still_connected {
+            let _ = task
+                .connection_manager
+                .cancel_pending_presence_member(&task.app_config.id, &task.channel, &task.user_id)
+                .await;
+            return;
+        }
+
+        let pending = task
+            .connection_manager
+            .remove_pending_presence_member(
+                &task.app_config.id,
+                &task.channel,
+                &task.user_id,
+                task.generation,
+            )
+            .await
+            .ok()
+            .flatten();
+        if pending.is_none() {
+            return;
+        }
+
+        if let Some(socket_id) = task.socket_for_leave.as_deref()
+            && let Some(horizontal_adapter) = task.connection_manager.as_horizontal_adapter()
+        {
+            horizontal_adapter
+                .broadcast_presence_leave(
+                    &task.app_config.id,
+                    &task.channel,
+                    &task.user_id,
+                    socket_id,
+                )
+                .await
+                .ok();
+        }
+
+        let _ = Self::emit_member_removed_inner(
+            &task.connection_manager,
+            task.presence_history_store,
+            task.presence_history_enabled,
+            task.webhook_integration.as_ref(),
+            task.metrics.as_ref(),
+            &task.app_config,
+            &task.channel,
+            &task.user_id,
+            None,
+            PresenceHistoryEventCause::Timeout,
+            None,
+            task.retention,
+        )
+        .await;
     }
 
     /// Handles presence member addition including both webhook and broadcast
@@ -334,62 +509,23 @@ impl PresenceManager {
                     )
                     .await?;
 
-                let cm = Arc::clone(connection_manager);
-                let store = Arc::clone(&presence_history_store);
-                let webhook = webhook_integration.cloned();
-                let metrics = metrics.cloned();
-                let app = app_config.clone();
-                let ch = channel.to_string();
-                let uid = user_id.to_string();
-                let socket_for_leave = excluding_socket.map(ToString::to_string);
-                let retention_for_task = retention.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(ungraceful_timeout_seconds))
-                        .await;
-                    let still_connected = Self::user_has_other_connections_in_presence_channel(
-                        Arc::clone(&cm),
-                        &app.id,
-                        &ch,
-                        &uid,
-                        None,
-                    )
-                    .await
-                    .unwrap_or(false);
-                    if still_connected {
-                        let _ = cm.cancel_pending_presence_member(&app.id, &ch, &uid).await;
-                        return;
-                    }
-                    let pending = cm
-                        .remove_pending_presence_member(&app.id, &ch, &uid, generation)
-                        .await
-                        .ok()
-                        .flatten();
-                    if pending.is_some() {
-                        if let Some(socket_id) = socket_for_leave.as_deref()
-                            && let Some(horizontal_adapter) = cm.as_horizontal_adapter()
-                        {
-                            horizontal_adapter
-                                .broadcast_presence_leave(&app.id, &ch, &uid, socket_id)
-                                .await
-                                .ok();
-                        }
-                        let _ = Self::emit_member_removed_inner(
-                            &cm,
-                            store,
-                            presence_history_enabled,
-                            webhook.as_ref(),
-                            metrics.as_ref(),
-                            &app,
-                            &ch,
-                            &uid,
-                            None,
-                            PresenceHistoryEventCause::Timeout,
-                            None,
-                            retention_for_task,
-                        )
-                        .await;
-                    }
-                });
+                self.schedule_pending_removal(
+                    ungraceful_timeout_seconds,
+                    PendingRemovalTask {
+                        connection_manager: Arc::clone(connection_manager),
+                        presence_history_store: Arc::clone(&presence_history_store),
+                        presence_history_enabled,
+                        webhook_integration: webhook_integration.cloned(),
+                        metrics: metrics.cloned(),
+                        app_config: app_config.clone(),
+                        channel: channel.to_string(),
+                        user_id: user_id.to_string(),
+                        socket_for_leave: excluding_socket.map(ToString::to_string),
+                        generation,
+                        retention: retention.clone(),
+                    },
+                )
+                .await?;
 
                 self.cleanup_stale_locks();
                 return Ok(());

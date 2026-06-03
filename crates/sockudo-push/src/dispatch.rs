@@ -19,6 +19,8 @@ use std::sync::Arc;
 ))]
 use std::time::Duration;
 use std::time::Instant;
+#[cfg(feature = "push-webpush")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 #[cfg(feature = "push-webpush")]
@@ -207,7 +209,7 @@ impl FcmServiceAccountTokenSource {
         let issued_at_secs = now_ms / 1_000;
         let mut header = Header::new(Algorithm::RS256);
         header.kid.clone_from(&self.private_key_id);
-        let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
+        let _ = jsonwebtoken::crypto::aws_lc::DEFAULT_PROVIDER.install_default();
         jsonwebtoken::encode(
             &header,
             &Claims {
@@ -1336,10 +1338,16 @@ impl WebPushCrypto for PassthroughWebPushCrypto {
 #[cfg(feature = "push-webpush")]
 #[derive(Clone)]
 pub struct NativeWebPushCrypto {
-    vapid_key:
-        Result<Arc<web_push_native::jwt_simple::algorithms::ES256KeyPair>, NativeWebPushKeyError>,
+    vapid_key: Result<Arc<NativeVapidKey>, NativeWebPushKeyError>,
     contact: String,
     valid_for: std::time::Duration,
+}
+
+#[cfg(feature = "push-webpush")]
+#[derive(Clone)]
+struct NativeVapidKey {
+    signing_key: web_push_native::p256::ecdsa::SigningKey,
+    public_key: String,
 }
 
 #[cfg(feature = "push-webpush")]
@@ -1357,9 +1365,18 @@ impl NativeWebPushCrypto {
             .decode(vapid_private_key.as_bytes())
             .map_err(|_| NativeWebPushKeyError::Encoding)
             .and_then(|bytes| {
-                web_push_native::jwt_simple::algorithms::ES256KeyPair::from_bytes(&bytes)
-                    .map(Arc::new)
-                    .map_err(|_| NativeWebPushKeyError::Key)
+                use web_push_native::p256::{
+                    SecretKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint,
+                };
+
+                let secret_key =
+                    SecretKey::from_slice(&bytes).map_err(|_| NativeWebPushKeyError::Key)?;
+                let public_key = URL_SAFE_NO_PAD
+                    .encode(secret_key.public_key().to_encoded_point(false).as_bytes());
+                Ok(Arc::new(NativeVapidKey {
+                    signing_key: SigningKey::from(secret_key),
+                    public_key,
+                }))
             });
         Self {
             vapid_key,
@@ -1371,6 +1388,76 @@ impl NativeWebPushCrypto {
     pub fn with_valid_for(mut self, valid_for: std::time::Duration) -> Self {
         self.valid_for = valid_for;
         self
+    }
+
+    fn vapid_authorization(&self, endpoint: &str) -> Result<SecretString, ProviderError> {
+        use web_push_native::p256::ecdsa::{Signature, signature::Signer};
+
+        let vapid_key = self.vapid_key.as_ref().map_err(|error| match error {
+            NativeWebPushKeyError::Encoding => ProviderError {
+                class: "auth_failure".to_owned(),
+                reason: Some("invalid VAPID private key encoding".to_owned()),
+                retry_after_ms: None,
+            },
+            NativeWebPushKeyError::Key => ProviderError {
+                class: "auth_failure".to_owned(),
+                reason: Some("invalid VAPID private key".to_owned()),
+                retry_after_ms: None,
+            },
+        })?;
+        let endpoint_uri = Url::parse(endpoint).map_err(|_| ProviderError {
+            class: "invalid_token".to_owned(),
+            reason: Some("invalid Web Push endpoint".to_owned()),
+            retry_after_ms: None,
+        })?;
+        let scheme = endpoint_uri.scheme();
+        if scheme.is_empty() {
+            return Err(ProviderError {
+                class: "invalid_token".to_owned(),
+                reason: Some("invalid Web Push endpoint scheme".to_owned()),
+                retry_after_ms: None,
+            });
+        }
+        let host = endpoint_uri.host_str().ok_or_else(|| ProviderError {
+            class: "invalid_token".to_owned(),
+            reason: Some("invalid Web Push endpoint host".to_owned()),
+            retry_after_ms: None,
+        })?;
+        let exp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ProviderError {
+                class: "auth_failure".to_owned(),
+                reason: Some("system clock before Unix epoch".to_owned()),
+                retry_after_ms: None,
+            })?
+            .as_secs()
+            .saturating_add(self.valid_for.as_secs());
+        let header = URL_SAFE_NO_PAD.encode(br#"{"typ":"JWT","alg":"ES256"}"#);
+        let claims = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "aud": format!("{scheme}://{host}"),
+                "exp": exp,
+                "sub": self.contact,
+            }))
+            .map_err(|_| ProviderError {
+                class: "auth_failure".to_owned(),
+                reason: Some("failed to serialize VAPID claims".to_owned()),
+                retry_after_ms: None,
+            })?,
+        );
+        let signing_input = format!("{header}.{claims}");
+        let signature: Signature = vapid_key.signing_key.sign(signing_input.as_bytes());
+        let token = format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(signature.to_bytes())
+        );
+        SecretString::new(format!("vapid t={token}, k={}", vapid_key.public_key)).map_err(|_| {
+            ProviderError {
+                class: "auth_failure".to_owned(),
+                reason: Some("invalid VAPID authorization header".to_owned()),
+                retry_after_ms: None,
+            }
+        })
     }
 }
 
@@ -1387,18 +1474,6 @@ impl WebPushCrypto for NativeWebPushCrypto {
     ) -> Result<WebPushPreparedRequest, ProviderError> {
         use web_push_native::{Auth, WebPushBuilder, p256::PublicKey};
 
-        let vapid_key = self.vapid_key.as_ref().map_err(|error| match error {
-            NativeWebPushKeyError::Encoding => ProviderError {
-                class: "auth_failure".to_owned(),
-                reason: Some("invalid VAPID private key encoding".to_owned()),
-                retry_after_ms: None,
-            },
-            NativeWebPushKeyError::Key => ProviderError {
-                class: "auth_failure".to_owned(),
-                reason: Some("invalid VAPID private key".to_owned()),
-                retry_after_ms: None,
-            },
-        })?;
         let p256dh_bytes = URL_SAFE_NO_PAD
             .decode(p256dh.expose_secret().as_bytes())
             .map_err(|_| ProviderError {
@@ -1435,7 +1510,6 @@ impl WebPushCrypto for NativeWebPushCrypto {
             Auth::clone_from_slice(&auth_bytes),
         )
         .with_valid_duration(self.valid_for)
-        .with_vapid(vapid_key.as_ref(), &self.contact)
         .build(payload.to_vec())
         .map_err(|error| ProviderError {
             class: "invalid_payload".to_owned(),
@@ -1443,19 +1517,14 @@ impl WebPushCrypto for NativeWebPushCrypto {
             retry_after_ms: None,
         })?;
 
-        let mut authorization = None;
+        let authorization = Some(self.vapid_authorization(endpoint)?);
         let headers = request
             .headers()
             .iter()
             .filter_map(|(name, value)| {
                 let name = name.as_str().to_ascii_lowercase();
                 let value = value.to_str().ok()?;
-                if name == "authorization" {
-                    authorization = SecretString::new(value.to_owned()).ok();
-                    None
-                } else {
-                    Some((name, value.to_owned()))
-                }
+                Some((name, value.to_owned()))
             })
             .collect();
 

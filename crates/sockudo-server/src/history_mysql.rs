@@ -150,7 +150,7 @@ impl MySqlHistoryStore {
                AND COLUMN_NAME = '{}'"#,
             table_name, column_name
         );
-        let exists: Option<(String,)> = sqlx::query_as(&check_query)
+        let exists: Option<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(check_query.as_str()))
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| {
@@ -163,7 +163,7 @@ impl MySqlHistoryStore {
                 "ALTER TABLE {} ADD COLUMN {} {}",
                 table_name, column_name, column_type
             );
-            sqlx::query(&alter_query)
+            sqlx::query(sqlx::AssertSqlSafe(alter_query.as_str()))
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {
@@ -430,9 +430,12 @@ impl MySqlHistoryStore {
             create_annotation_events,
             create_annotation_projections,
         ] {
-            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
-                Error::Internal(format!("Failed to initialize MySQL history tables: {e}"))
-            })?;
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    Error::Internal(format!("Failed to initialize MySQL history tables: {e}"))
+                })?;
         }
 
         self.add_column_if_not_exists(
@@ -481,7 +484,9 @@ impl MySqlHistoryStore {
             index_annotation_events_raw_replay,
             index_annotation_events_created_at,
         ] {
-            let _ = sqlx::query(&sql).execute(&self.pool).await;
+            let _ = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .execute(&self.pool)
+                .await;
         }
 
         Ok(())
@@ -555,7 +560,7 @@ impl MySqlHistoryStore {
             "INSERT IGNORE INTO {} (app_id, channel, stream_id, serial, published_at_ms, message_id, event_name, operation_kind, payload_bytes, payload_size_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             tables.entries
         );
-        sqlx::query(&insert_sql)
+        sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(&record.stream_id)
@@ -578,7 +583,7 @@ impl MySqlHistoryStore {
             "SELECT COUNT(*) AS count, CAST(COALESCE(SUM(payload_size_bytes), 0) AS SIGNED) AS bytes FROM {} WHERE app_id = ? AND channel = ? AND published_at_ms < ?",
             tables.entries
         );
-        let age_stats = sqlx::query(&age_stats_sql)
+        let age_stats = sqlx::query(sqlx::AssertSqlSafe(age_stats_sql.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(cutoff_ms)
@@ -594,7 +599,7 @@ impl MySqlHistoryStore {
             "DELETE FROM {} WHERE app_id = ? AND channel = ? AND published_at_ms < ?",
             tables.entries
         );
-        sqlx::query(&age_delete)
+        sqlx::query(sqlx::AssertSqlSafe(age_delete.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(cutoff_ms)
@@ -609,7 +614,7 @@ impl MySqlHistoryStore {
                 "SELECT COUNT(*) AS count FROM {} WHERE app_id = ? AND channel = ?",
                 tables.entries
             );
-            let row = sqlx::query(&count_sql)
+            let row = sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str()))
                 .bind(&record.app_id)
                 .bind(&record.channel)
                 .fetch_one(&mut *tx)
@@ -622,7 +627,7 @@ impl MySqlHistoryStore {
                     "SELECT COUNT(*) AS count, CAST(COALESCE(SUM(payload_size_bytes), 0) AS SIGNED) AS bytes FROM (SELECT payload_size_bytes FROM {} WHERE app_id = ? AND channel = ? ORDER BY serial ASC LIMIT {}) t",
                     tables.entries, overflow
                 );
-                let trim_stats = sqlx::query(&trim_stats_sql)
+                let trim_stats = sqlx::query(sqlx::AssertSqlSafe(trim_stats_sql.as_str()))
                     .bind(&record.app_id)
                     .bind(&record.channel)
                     .fetch_one(&mut *tx)
@@ -639,7 +644,7 @@ impl MySqlHistoryStore {
                     "DELETE e FROM {0} e JOIN (SELECT app_id, channel, stream_id, serial FROM {0} WHERE app_id = ? AND channel = ? ORDER BY serial ASC LIMIT {1}) old ON e.app_id = old.app_id AND e.channel = old.channel AND e.stream_id = old.stream_id AND e.serial = old.serial",
                     tables.entries, overflow
                 );
-                sqlx::query(&trim_sql)
+                sqlx::query(sqlx::AssertSqlSafe(trim_sql.as_str()))
                     .bind(&record.app_id)
                     .bind(&record.channel)
                     .execute(&mut *tx)
@@ -655,7 +660,7 @@ impl MySqlHistoryStore {
                 "SELECT serial, payload_size_bytes FROM {} WHERE app_id = ? AND channel = ? ORDER BY serial ASC",
                 tables.entries
             );
-            let rows = sqlx::query(&size_sql)
+            let rows = sqlx::query(sqlx::AssertSqlSafe(size_sql.as_str()))
                 .bind(&record.app_id)
                 .bind(&record.channel)
                 .fetch_all(&mut *tx)
@@ -685,7 +690,7 @@ impl MySqlHistoryStore {
                         "SELECT CAST(COALESCE(SUM(payload_size_bytes), 0) AS SIGNED) AS bytes FROM {} WHERE app_id = ? AND channel = ? AND serial IN ({})",
                         tables.entries, placeholders
                     );
-                    let mut bytes_query = sqlx::query(&bytes_sql)
+                    let mut bytes_query = sqlx::query(sqlx::AssertSqlSafe(bytes_sql.as_str()))
                         .bind(&record.app_id)
                         .bind(&record.channel);
                     for serial in &serials {
@@ -702,7 +707,7 @@ impl MySqlHistoryStore {
                         "DELETE FROM {} WHERE app_id = ? AND channel = ? AND serial IN ({})",
                         tables.entries, placeholders
                     );
-                    let mut delete_query = sqlx::query(&delete_sql)
+                    let mut delete_query = sqlx::query(sqlx::AssertSqlSafe(delete_sql.as_str()))
                         .bind(&record.app_id)
                         .bind(&record.channel);
                     for serial in &serials {
@@ -728,7 +733,7 @@ impl MySqlHistoryStore {
             "UPDATE {} SET next_serial = GREATEST(next_serial, ?) WHERE app_id = ? AND channel = ?",
             tables.streams
         );
-        sqlx::query(&next_serial_sql)
+        sqlx::query(sqlx::AssertSqlSafe(next_serial_sql.as_str()))
             .bind(record.serial.saturating_add(1) as i64)
             .bind(&record.app_id)
             .bind(&record.channel)
@@ -779,7 +784,7 @@ impl MySqlHistoryStore {
             "SELECT stream_id, next_serial, retained_messages, retained_bytes, oldest_available_serial, newest_available_serial, oldest_available_published_at_ms, newest_available_published_at_ms, durable_state, durable_state_reason, durable_state_node_id, durable_state_changed_at_ms FROM {} WHERE app_id = ? AND channel = ?",
             self.tables.streams
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_optional(&self.pool)
@@ -882,7 +887,7 @@ impl MySqlHistoryStore {
             "SELECT COUNT(*) AS retained_messages, CAST(COALESCE(SUM(payload_size_bytes), 0) AS SIGNED) AS retained_bytes, MIN(serial) AS oldest_serial, MAX(serial) AS newest_serial, MIN(published_at_ms) AS oldest_published_at_ms, MAX(published_at_ms) AS newest_published_at_ms FROM {} WHERE app_id = ? AND channel = ?",
             tables.entries
         );
-        let aggregates = sqlx::query(&aggregates_sql)
+        let aggregates = sqlx::query(sqlx::AssertSqlSafe(aggregates_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_one(&mut **tx)
@@ -913,7 +918,7 @@ impl MySqlHistoryStore {
             "UPDATE {} SET retained_messages = ?, retained_bytes = ?, oldest_available_serial = ?, newest_available_serial = ?, oldest_available_published_at_ms = ?, newest_available_published_at_ms = ?, updated_at_ms = ? WHERE app_id = ? AND channel = ?",
             tables.streams
         );
-        sqlx::query(&update_sql)
+        sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
             .bind(retained.retained_messages as i64)
             .bind(retained.retained_bytes as i64)
             .bind(retained.oldest_serial.map(|v| v as i64))
@@ -949,7 +954,7 @@ impl HistoryStore for MySqlHistoryStore {
             "SELECT stream_id, next_serial FROM {} WHERE app_id = ? AND channel = ? FOR UPDATE",
             self.tables.streams
         );
-        if let Some(row) = sqlx::query(&select_sql)
+        if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_optional(&mut *tx)
@@ -965,7 +970,7 @@ impl HistoryStore for MySqlHistoryStore {
                 self.tables.streams
             );
             let now_ms = sockudo_core::history::now_ms();
-            sqlx::query(&update_sql)
+            sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
                 .bind((serial + 1) as i64)
                 .bind(now_ms)
                 .bind(app_id)
@@ -987,7 +992,7 @@ impl HistoryStore for MySqlHistoryStore {
             "INSERT INTO {} (app_id, channel, stream_id, next_serial, updated_at_ms) VALUES (?, ?, ?, 2, ?)",
             self.tables.streams
         );
-        sqlx::query(&insert_sql)
+        sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(&stream_id)
@@ -1124,7 +1129,7 @@ impl HistoryStore for MySqlHistoryStore {
             order,
             request.limit + 1
         );
-        let mut query = sqlx::query(&sql)
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&request.app_id)
             .bind(&request.channel);
         if let Some(stream_id) = bind_stream {
@@ -1198,9 +1203,12 @@ impl HistoryStore for MySqlHistoryStore {
             "SELECT COALESCE(SUM(CASE WHEN durable_state <> 'healthy' THEN 1 ELSE 0 END), 0) AS degraded_channels, COALESCE(SUM(CASE WHEN durable_state = 'reset_required' THEN 1 ELSE 0 END), 0) AS reset_required_channels FROM {}",
             self.tables.streams
         );
-        let row = sqlx::query(&sql).fetch_one(&self.pool).await.map_err(|e| {
-            Error::Internal(format!("Failed to read MySQL history runtime status: {e}"))
-        })?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| {
+                Error::Internal(format!("Failed to read MySQL history runtime status: {e}"))
+            })?;
         Ok(HistoryRuntimeStatus {
             enabled: true,
             backend: "mysql".to_string(),
@@ -1252,7 +1260,7 @@ impl HistoryStore for MySqlHistoryStore {
             "SELECT COUNT(*) AS count, CAST(COALESCE(SUM(payload_size_bytes), 0) AS SIGNED) AS bytes FROM {} WHERE app_id = ? AND channel = ?",
             self.tables.entries
         );
-        let stats = sqlx::query(&stats_sql)
+        let stats = sqlx::query(sqlx::AssertSqlSafe(stats_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_one(&mut *tx)
@@ -1269,7 +1277,7 @@ impl HistoryStore for MySqlHistoryStore {
             "DELETE FROM {} WHERE app_id = ? AND channel = ?",
             self.tables.entries
         );
-        sqlx::query(&delete_sql)
+        sqlx::query(sqlx::AssertSqlSafe(delete_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .execute(&mut *tx)
@@ -1284,7 +1292,7 @@ impl HistoryStore for MySqlHistoryStore {
             "INSERT INTO {} (app_id, channel, stream_id, next_serial, durable_state, durable_state_reason, durable_state_node_id, durable_state_changed_at_ms, retained_messages, retained_bytes, oldest_available_serial, newest_available_serial, oldest_available_published_at_ms, newest_available_published_at_ms, updated_at_ms) VALUES (?, ?, ?, 1, 'healthy', NULL, NULL, ?, 0, 0, NULL, NULL, NULL, NULL, ?) ON DUPLICATE KEY UPDATE stream_id = VALUES(stream_id), next_serial = 1, durable_state = 'healthy', durable_state_reason = NULL, durable_state_node_id = NULL, durable_state_changed_at_ms = VALUES(durable_state_changed_at_ms), retained_messages = 0, retained_bytes = 0, oldest_available_serial = NULL, newest_available_serial = NULL, oldest_available_published_at_ms = NULL, newest_available_published_at_ms = NULL, updated_at_ms = VALUES(updated_at_ms)",
             self.tables.streams
         );
-        sqlx::query(&upsert_sql)
+        sqlx::query(sqlx::AssertSqlSafe(upsert_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(&new_stream_id)
@@ -1346,7 +1354,9 @@ impl HistoryStore for MySqlHistoryStore {
                 self.tables.entries
             ),
         };
-        let mut stats_query = sqlx::query(&stats_sql).bind(app_id).bind(channel);
+        let mut stats_query = sqlx::query(sqlx::AssertSqlSafe(stats_sql.as_str()))
+            .bind(app_id)
+            .bind(channel);
         match request.mode {
             HistoryPurgeMode::All => {}
             HistoryPurgeMode::BeforeSerial => {
@@ -1376,7 +1386,9 @@ impl HistoryStore for MySqlHistoryStore {
                 self.tables.entries
             ),
         };
-        let mut delete_query = sqlx::query(&delete_sql).bind(app_id).bind(channel);
+        let mut delete_query = sqlx::query(sqlx::AssertSqlSafe(delete_sql.as_str()))
+            .bind(app_id)
+            .bind(channel);
         match request.mode {
             HistoryPurgeMode::All => {}
             HistoryPurgeMode::BeforeSerial => {
@@ -1436,7 +1448,7 @@ impl HistoryStore for MySqlHistoryStore {
             "DELETE FROM {} WHERE published_at_ms < ? ORDER BY published_at_ms ASC LIMIT ?",
             self.tables.entries
         );
-        let rows_deleted = sqlx::query(&sql)
+        let rows_deleted = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(before_ms)
             .bind(batch_size as i64)
             .execute(&self.pool)
@@ -1609,7 +1621,7 @@ async fn mark_channel_degraded(
         "UPDATE {} SET durable_state = ?, durable_state_reason = ?, durable_state_node_id = ?, durable_state_changed_at_ms = ? WHERE app_id = ? AND channel = ? AND IFNULL(durable_state_changed_at_ms, 0) <= ?",
         tables.streams
     );
-    if let Err(err) = sqlx::query(&update_sql)
+    if let Err(err) = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
         .bind(state.durable_state.as_str())
         .bind(&state.reason)
         .bind(&state.node_id)
@@ -1683,7 +1695,7 @@ async fn refresh_history_state_metrics(
         "SELECT COALESCE(SUM(CASE WHEN durable_state <> 'healthy' THEN 1 ELSE 0 END), 0) AS degraded_channels, COALESCE(SUM(CASE WHEN durable_state = 'reset_required' THEN 1 ELSE 0 END), 0) AS reset_required_channels FROM {} WHERE app_id = ?",
         tables.streams
     );
-    let row = sqlx::query(&sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(app_id)
         .fetch_one(pool)
         .await
@@ -1840,9 +1852,12 @@ impl MysqlVersionStore {
             create_version_messages,
             create_version_entries,
         ] {
-            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
-                Error::Internal(format!("Failed to initialize MySQL version tables: {e}"))
-            })?;
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    Error::Internal(format!("Failed to initialize MySQL version tables: {e}"))
+                })?;
         }
 
         // Ensure the purge indices exist on tables created before the purge
@@ -1872,11 +1887,14 @@ impl MysqlVersionStore {
                 "CREATE INDEX `{}` ON `{}` (`{}`)",
                 index_name, table, column
             );
-            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
-                Error::Internal(format!(
-                    "Failed to create MySQL index {index_name} on {table}: {e}"
-                ))
-            })?;
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    Error::Internal(format!(
+                        "Failed to create MySQL index {index_name} on {table}: {e}"
+                    ))
+                })?;
         }
         Ok(())
     }
@@ -1897,7 +1915,7 @@ impl VersionStore for MysqlVersionStore {
             "INSERT IGNORE INTO `{}` (app_id, channel, next_delivery_serial, updated_at_ms) VALUES (?, ?, 1, ?)",
             self.tables.version_streams
         );
-        sqlx::query(&insert_sql)
+        sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(now_ms)
@@ -1915,7 +1933,7 @@ impl VersionStore for MysqlVersionStore {
             "SELECT next_delivery_serial FROM `{}` WHERE app_id = ? AND channel = ? FOR UPDATE",
             self.tables.version_streams
         );
-        let row = sqlx::query(&select_sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(select_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_one(&mut *tx)
@@ -1929,7 +1947,7 @@ impl VersionStore for MysqlVersionStore {
             "UPDATE `{}` SET next_delivery_serial = next_delivery_serial + 1, updated_at_ms = ? WHERE app_id = ? AND channel = ?",
             self.tables.version_streams
         );
-        sqlx::query(&update_sql)
+        sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
             .bind(now_ms)
             .bind(app_id)
             .bind(channel)
@@ -1971,7 +1989,7 @@ impl VersionStore for MysqlVersionStore {
             "INSERT IGNORE INTO `{}` (app_id, channel, next_delivery_serial, updated_at_ms) VALUES (?, ?, 1, ?)",
             self.tables.version_streams
         );
-        sqlx::query(&insert_sql)
+        sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(now_ms)
@@ -1989,7 +2007,7 @@ impl VersionStore for MysqlVersionStore {
             "SELECT next_delivery_serial FROM `{}` WHERE app_id = ? AND channel = ? FOR UPDATE",
             self.tables.version_streams
         );
-        let row = sqlx::query(&select_sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(select_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_one(&mut *tx)
@@ -2003,7 +2021,7 @@ impl VersionStore for MysqlVersionStore {
             "UPDATE `{}` SET next_delivery_serial = next_delivery_serial + ?, updated_at_ms = ? WHERE app_id = ? AND channel = ?",
             self.tables.version_streams
         );
-        sqlx::query(&update_sql)
+        sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
             .bind(block_size_i64)
             .bind(now_ms)
             .bind(app_id)
@@ -2039,7 +2057,7 @@ impl VersionStore for MysqlVersionStore {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             self.tables.version_entries
         );
-        sqlx::query(&insert_entry)
+        sqlx::query(sqlx::AssertSqlSafe(insert_entry.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(record.message_serial().as_str())
@@ -2072,7 +2090,7 @@ impl VersionStore for MysqlVersionStore {
                 updated_at_ms = IF(latest_version_serial < VALUES(latest_version_serial), VALUES(updated_at_ms), updated_at_ms)"#,
             self.tables.version_messages
         );
-        sqlx::query(&upsert_msg)
+        sqlx::query(sqlx::AssertSqlSafe(upsert_msg.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(record.message_serial().as_str())
@@ -2101,7 +2119,7 @@ impl VersionStore for MysqlVersionStore {
             self.tables.version_streams
         );
         let delivery = record.delivery_serial() as i64;
-        sqlx::query(&update_stream)
+        sqlx::query(sqlx::AssertSqlSafe(update_stream.as_str()))
             .bind(delivery)
             .bind(delivery)
             .bind(delivery)
@@ -2126,7 +2144,7 @@ impl VersionStore for MysqlVersionStore {
             "SELECT payload_bytes FROM `{}` WHERE app_id = ? AND channel = ? AND message_serial = ? ORDER BY version_serial DESC LIMIT 1",
             self.tables.version_entries
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(message_serial.as_str())
@@ -2160,7 +2178,7 @@ impl VersionStore for MysqlVersionStore {
                 "SELECT payload_bytes FROM `{}` WHERE app_id = ? AND channel = ? AND message_serial = ? AND version_serial {} ? ORDER BY version_serial {} LIMIT ?",
                 self.tables.version_entries, cursor_op, order_dir
             );
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(&request.app_id)
                 .bind(&request.channel)
                 .bind(request.message_serial.as_str())
@@ -2174,7 +2192,7 @@ impl VersionStore for MysqlVersionStore {
                 "SELECT payload_bytes FROM `{}` WHERE app_id = ? AND channel = ? AND message_serial = ? ORDER BY version_serial {} LIMIT ?",
                 self.tables.version_entries, order_dir
             );
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(&request.app_id)
                 .bind(&request.channel)
                 .bind(request.message_serial.as_str())
@@ -2221,7 +2239,7 @@ impl VersionStore for MysqlVersionStore {
             "SELECT payload_bytes FROM `{}` WHERE app_id = ? AND channel = ? AND delivery_serial > ? ORDER BY delivery_serial ASC LIMIT ?",
             self.tables.version_entries
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&request.app_id)
             .bind(&request.channel)
             .bind(request.after_delivery_serial as i64)
@@ -2256,7 +2274,7 @@ impl VersionStore for MysqlVersionStore {
             vm = self.tables.version_messages,
             ve = self.tables.version_entries
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_all(&self.pool)
@@ -2277,7 +2295,7 @@ impl VersionStore for MysqlVersionStore {
             "SELECT next_delivery_serial, oldest_available_delivery_serial, newest_available_delivery_serial FROM `{}` WHERE app_id = ? AND channel = ?",
             self.tables.version_streams
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_optional(&self.pool)
@@ -2313,7 +2331,7 @@ impl VersionStore for MysqlVersionStore {
             "DELETE FROM `{}` WHERE created_at_ms < ? ORDER BY created_at_ms ASC LIMIT ?",
             self.tables.version_entries
         );
-        let entries_deleted = sqlx::query(&entries_sql)
+        let entries_deleted = sqlx::query(sqlx::AssertSqlSafe(entries_sql.as_str()))
             .bind(before_ms)
             .bind(limit)
             .execute(&self.pool)
@@ -2325,7 +2343,7 @@ impl VersionStore for MysqlVersionStore {
             "DELETE FROM `{}` WHERE updated_at_ms < ? ORDER BY updated_at_ms ASC LIMIT ?",
             self.tables.version_messages
         );
-        let messages_deleted = sqlx::query(&messages_sql)
+        let messages_deleted = sqlx::query(sqlx::AssertSqlSafe(messages_sql.as_str()))
             .bind(before_ms)
             .bind(limit)
             .execute(&self.pool)

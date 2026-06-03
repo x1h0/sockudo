@@ -1188,18 +1188,7 @@ async fn ai_channel_stats(
     } else {
         Vec::new()
     };
-    let active_streams = latest_messages
-        .iter()
-        .filter(|record| {
-            record
-                .message
-                .extras
-                .as_ref()
-                .and_then(|extras| extras.ai_transport_headers())
-                .and_then(|headers| headers.status())
-                == Some("streaming")
-        })
-        .count();
+    let active_streams = handler.ai_active_stream_count(app_id, channel).await?;
 
     Ok(Some(json!({
         "active_streams": active_streams,
@@ -1960,31 +1949,99 @@ async fn validate_ai_append_caps(
         )));
     }
 
-    let page = handler
-        .version_store()
-        .get_versions(VersionStoreReadRequest {
-            app_id: current.app_id.clone(),
-            channel: current.channel.clone(),
-            message_serial: current.message_serial().clone(),
-            direction: VersionStoreDirection::OldestFirst,
-            limit: config.max_appends_per_message.saturating_add(1),
-            cursor: None,
-        })
+    Ok(())
+}
+
+fn ai_append_count_key(current: &StoredVersionRecord) -> String {
+    format!(
+        "ai_transport:append_count:{}:{}:{}",
+        current.app_id,
+        current.channel,
+        current.message_serial().as_str()
+    )
+}
+
+fn ai_counter_ttl_seconds(handler: &ConnectionHandler) -> u64 {
+    handler
+        .server_options()
+        .versioned_messages
+        .retention_window_seconds
+        .max(1)
+}
+
+async fn reserve_ai_append_capacity(
+    handler: &ConnectionHandler,
+    current: &StoredVersionRecord,
+) -> Result<Option<String>, AppError> {
+    if !ai_transport_applies(handler, &current.channel) {
+        return Ok(None);
+    }
+
+    let key = ai_append_count_key(current);
+    if handler.cache_manager().get(&key).await?.is_none() {
+        let page = handler
+            .version_store()
+            .get_versions(VersionStoreReadRequest {
+                app_id: current.app_id.clone(),
+                channel: current.channel.clone(),
+                message_serial: current.message_serial().clone(),
+                direction: VersionStoreDirection::OldestFirst,
+                limit: handler
+                    .server_options()
+                    .ai_transport
+                    .max_appends_per_message
+                    .saturating_add(1),
+                cursor: None,
+            })
+            .await?;
+        let append_count = page
+            .items
+            .iter()
+            .filter(|record| record.message.action == CoreMessageAction::Append)
+            .count();
+        handler
+            .cache_manager()
+            .set(
+                &key,
+                &append_count.to_string(),
+                ai_counter_ttl_seconds(handler),
+            )
+            .await?;
+    }
+
+    let next = handler
+        .cache_manager()
+        .increment_by(&key, 1, ai_counter_ttl_seconds(handler))
         .await?;
-    let append_count = page
-        .items
-        .iter()
-        .filter(|record| record.message.action == CoreMessageAction::Append)
-        .count();
-    if append_count >= config.max_appends_per_message {
+    let max_appends = handler
+        .server_options()
+        .ai_transport
+        .max_appends_per_message as i64;
+    if next > max_appends {
+        let _ = handler
+            .cache_manager()
+            .increment_by(&key, -1, ai_counter_ttl_seconds(handler))
+            .await;
         record_ai_rejection(handler, &current.app_id, AI_ERROR_PAYLOAD_TOO_LARGE);
         return Err(ai_payload_too_large(format!(
             "message append count exceeds {}",
-            config.max_appends_per_message
+            handler
+                .server_options()
+                .ai_transport
+                .max_appends_per_message
         )));
     }
 
-    Ok(())
+    Ok(Some(key))
+}
+
+async fn rollback_ai_append_capacity(handler: &ConnectionHandler, key: Option<&str>) {
+    if let Some(key) = key {
+        let _ = handler
+            .cache_manager()
+            .increment_by(key, -1, ai_counter_ttl_seconds(handler))
+            .await;
+    }
 }
 
 fn validate_ai_update_caps(
@@ -2889,7 +2946,6 @@ pub async fn update_message(
         updated.version_serial().as_str(),
         ProtocolMessageAction::Update,
     );
-    #[cfg(feature = "ai-transport")]
     handler
         .record_ai_stream_activity(&path.app_id, &path.channel_name, &updated)
         .await?;
@@ -3059,7 +3115,6 @@ pub async fn delete_message(
         deleted.version_serial().as_str(),
         ProtocolMessageAction::Delete,
     );
-    #[cfg(feature = "ai-transport")]
     handler
         .record_ai_stream_activity(&path.app_id, &path.channel_name, &deleted)
         .await?;
@@ -3198,32 +3253,40 @@ pub async fn append_message(
             current.delivery_serial(),
         )
         .await?;
-    let appended_message = current
-        .message
-        .apply_append(
-            build_mutation_version_metadata(
-                &handler,
-                actor_client_id,
-                request.description.clone(),
-                request.metadata.clone(),
-            )?,
-            reservation.delivery_serial,
-            MessageAppend {
-                data_fragment: request.data.clone(),
-                extras: request.extras.clone(),
-            },
-        )
-        .map_err(AppError::from)?;
+    let append_capacity_key = reserve_ai_append_capacity(&handler, &current).await?;
+    let appended_message = match current.message.apply_append(
+        build_mutation_version_metadata(
+            &handler,
+            actor_client_id,
+            request.description.clone(),
+            request.metadata.clone(),
+        )?,
+        reservation.delivery_serial,
+        MessageAppend {
+            data_fragment: request.data.clone(),
+            extras: request.extras.clone(),
+        },
+    ) {
+        Ok(appended_message) => appended_message,
+        Err(error) => {
+            rollback_ai_append_capacity(&handler, append_capacity_key.as_deref()).await;
+            return Err(error.into());
+        }
+    };
     let appended = StoredVersionRecord {
         app_id: current.app_id.clone(),
         channel: current.channel.clone(),
         original_client_id: current.original_client_id.clone(),
         message: appended_message,
     };
-    handler
+    if let Err(error) = handler
         .version_store()
         .append_version(appended.clone())
-        .await?;
+        .await
+    {
+        rollback_ai_append_capacity(&handler, append_capacity_key.as_deref()).await;
+        return Err(error.into());
+    }
     enqueue_message_version_webhook(
         &handler,
         &app,
@@ -3232,7 +3295,6 @@ pub async fn append_message(
         appended.version_serial().as_str(),
         ProtocolMessageAction::Append,
     );
-    #[cfg(feature = "ai-transport")]
     handler
         .record_ai_stream_activity(&path.app_id, &path.channel_name, &appended)
         .await?;
@@ -9107,5 +9169,167 @@ mod tests {
         let json: Value = sonic_rs::from_slice(&body).unwrap();
         assert_eq!(json["accepted"], true);
         assert_eq!(json["action"], "append");
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    enum MatrixOperation {
+        SubscribePublic,
+        SubscribePrivate,
+        SubscribePresence,
+        PublishClientEvent,
+        PublishAiInput,
+        PublishAiOutput,
+        PublishAiTurn,
+        PublishAiCancel,
+        AppendOwn,
+        AppendOther,
+        UpdateOwn,
+        UpdateOther,
+        DeleteOwn,
+        DeleteOther,
+        HistoryWs,
+        HistoryHttp,
+        Rewind,
+        UntilAttach,
+        PresenceEnter,
+        PresenceUpdate,
+        MutationEndpoint,
+        PushRulePublish,
+        PushAdmin,
+        PushSubscribe,
+        RevocationAdmin,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    enum MatrixPrincipal {
+        Anonymous,
+        V1Hmac,
+        V2Hmac,
+        TokenSubscribe,
+        TokenPublish,
+        TokenHistory,
+        TokenPresence,
+        TokenMutationOwn,
+        TokenMutationAny,
+        ExpiredToken,
+        RevokedToken,
+        ServerKey,
+        WrongAppKey,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum MatrixDecision {
+        Allow,
+        Deny(u32),
+    }
+
+    const MATRIX_OPERATIONS: [MatrixOperation; 25] = [
+        MatrixOperation::SubscribePublic,
+        MatrixOperation::SubscribePrivate,
+        MatrixOperation::SubscribePresence,
+        MatrixOperation::PublishClientEvent,
+        MatrixOperation::PublishAiInput,
+        MatrixOperation::PublishAiOutput,
+        MatrixOperation::PublishAiTurn,
+        MatrixOperation::PublishAiCancel,
+        MatrixOperation::AppendOwn,
+        MatrixOperation::AppendOther,
+        MatrixOperation::UpdateOwn,
+        MatrixOperation::UpdateOther,
+        MatrixOperation::DeleteOwn,
+        MatrixOperation::DeleteOther,
+        MatrixOperation::HistoryWs,
+        MatrixOperation::HistoryHttp,
+        MatrixOperation::Rewind,
+        MatrixOperation::UntilAttach,
+        MatrixOperation::PresenceEnter,
+        MatrixOperation::PresenceUpdate,
+        MatrixOperation::MutationEndpoint,
+        MatrixOperation::PushRulePublish,
+        MatrixOperation::PushAdmin,
+        MatrixOperation::PushSubscribe,
+        MatrixOperation::RevocationAdmin,
+    ];
+
+    const MATRIX_PRINCIPALS: [MatrixPrincipal; 13] = [
+        MatrixPrincipal::Anonymous,
+        MatrixPrincipal::V1Hmac,
+        MatrixPrincipal::V2Hmac,
+        MatrixPrincipal::TokenSubscribe,
+        MatrixPrincipal::TokenPublish,
+        MatrixPrincipal::TokenHistory,
+        MatrixPrincipal::TokenPresence,
+        MatrixPrincipal::TokenMutationOwn,
+        MatrixPrincipal::TokenMutationAny,
+        MatrixPrincipal::ExpiredToken,
+        MatrixPrincipal::RevokedToken,
+        MatrixPrincipal::ServerKey,
+        MatrixPrincipal::WrongAppKey,
+    ];
+
+    fn authz_matrix_decision(
+        operation: MatrixOperation,
+        principal: MatrixPrincipal,
+    ) -> MatrixDecision {
+        use MatrixDecision::{Allow, Deny};
+        use MatrixOperation::*;
+        use MatrixPrincipal::*;
+
+        match (operation, principal) {
+            (_, ExpiredToken | RevokedToken) => Deny(4009),
+            (_, WrongAppKey) => Deny(4010),
+            (SubscribePublic, Anonymous | V1Hmac | V2Hmac | TokenSubscribe) => Allow,
+            (SubscribePrivate, V1Hmac | V2Hmac | TokenSubscribe) => Allow,
+            (SubscribePresence, V1Hmac | V2Hmac | TokenPresence) => Allow,
+            (PublishClientEvent, V1Hmac | V2Hmac | TokenPublish) => Allow,
+            (PublishAiInput | PublishAiCancel, V2Hmac | TokenPublish | ServerKey) => Allow,
+            (PublishAiOutput | PublishAiTurn, ServerKey) => Allow,
+            (
+                AppendOwn | UpdateOwn | DeleteOwn,
+                V2Hmac | TokenMutationOwn | TokenMutationAny | ServerKey,
+            ) => Allow,
+            (AppendOther | UpdateOther | DeleteOther, TokenMutationAny | ServerKey) => Allow,
+            (HistoryWs | Rewind | UntilAttach, V2Hmac | TokenHistory) => Allow,
+            (HistoryHttp, V1Hmac | V2Hmac | ServerKey) => Allow,
+            (PresenceEnter | PresenceUpdate, V2Hmac | TokenPresence) => Allow,
+            (MutationEndpoint, V2Hmac | TokenMutationOwn | TokenMutationAny | ServerKey) => Allow,
+            (PushRulePublish | PushAdmin | PushSubscribe | RevocationAdmin, ServerKey) => Allow,
+            (PushSubscribe, TokenPublish) => Deny(403),
+            (SubscribePublic, _) => Deny(4009),
+            (SubscribePrivate | SubscribePresence, _) => Deny(4009),
+            (PublishClientEvent, _) => Deny(4301),
+            (PublishAiInput | PublishAiOutput | PublishAiTurn | PublishAiCancel, _) => {
+                Deny(AI_ERROR_EVENT_NOT_PERMITTED)
+            }
+            (
+                AppendOwn | AppendOther | UpdateOwn | UpdateOther | DeleteOwn | DeleteOther
+                | MutationEndpoint,
+                _,
+            ) => Deny(AI_ERROR_MUTABLE_NOT_PERMITTED),
+            (HistoryWs | HistoryHttp | Rewind | UntilAttach, _) => Deny(403),
+            (PresenceEnter | PresenceUpdate, _) => Deny(104009),
+            (PushRulePublish | PushAdmin | PushSubscribe | RevocationAdmin, _) => Deny(403),
+        }
+    }
+
+    #[test]
+    fn ai_transport_authz_matrix_enumerates_every_operation_and_principal() {
+        let mut checked = 0usize;
+        for operation in MATRIX_OPERATIONS {
+            for principal in MATRIX_PRINCIPALS {
+                let decision = authz_matrix_decision(operation, principal);
+                match decision {
+                    MatrixDecision::Allow => {}
+                    MatrixDecision::Deny(code) => assert_ne!(
+                        code, 0,
+                        "deny decisions must carry a stable error code for {operation:?}/{principal:?}"
+                    ),
+                }
+                checked += 1;
+            }
+        }
+
+        assert_eq!(checked, MATRIX_OPERATIONS.len() * MATRIX_PRINCIPALS.len());
+        assert_eq!(checked, 325);
     }
 }

@@ -627,9 +627,12 @@ impl PostgresHistoryStore {
         lock_postgres_schema(&mut conn, "sockudo_history_schema").await?;
         let result: Result<()> = async {
             for sql in ddl {
-                sqlx::query(&sql).execute(&mut *conn).await.map_err(|e| {
-                    Error::Internal(format!("Failed to initialize history tables: {e}"))
-                })?;
+                sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Internal(format!("Failed to initialize history tables: {e}"))
+                    })?;
             }
             Ok(())
         }
@@ -721,7 +724,7 @@ impl PostgresHistoryStore {
             "#,
             tables.entries
         );
-        sqlx::query(&insert_sql)
+        sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(&record.stream_id)
@@ -747,7 +750,7 @@ impl PostgresHistoryStore {
             "#,
             tables.entries
         );
-        let age_rows = sqlx::query(&age_delete)
+        let age_rows = sqlx::query(sqlx::AssertSqlSafe(age_delete.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(cutoff_ms)
@@ -766,7 +769,7 @@ impl PostgresHistoryStore {
                 "SELECT COUNT(*) AS count FROM {} WHERE app_id = $1 AND channel = $2",
                 tables.entries
             );
-            let row = sqlx::query(&count_sql)
+            let row = sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str()))
                 .bind(&record.app_id)
                 .bind(&record.channel)
                 .fetch_one(&mut *tx)
@@ -789,7 +792,7 @@ impl PostgresHistoryStore {
                     "#,
                     entries = tables.entries
                 );
-                let trim_rows = sqlx::query(&trim_sql)
+                let trim_rows = sqlx::query(sqlx::AssertSqlSafe(trim_sql.as_str()))
                     .bind(&record.app_id)
                     .bind(&record.channel)
                     .fetch_all(&mut *tx)
@@ -812,7 +815,7 @@ impl PostgresHistoryStore {
                 "SELECT serial, payload_size_bytes FROM {} WHERE app_id = $1 AND channel = $2 ORDER BY serial ASC",
                 tables.entries
             );
-            let rows = sqlx::query(&size_sql)
+            let rows = sqlx::query(sqlx::AssertSqlSafe(size_sql.as_str()))
                 .bind(&record.app_id)
                 .bind(&record.channel)
                 .fetch_all(&mut *tx)
@@ -840,7 +843,7 @@ impl PostgresHistoryStore {
                         "DELETE FROM {} WHERE app_id = $1 AND channel = $2 AND serial = ANY($3) RETURNING payload_size_bytes",
                         tables.entries
                     );
-                    let trim_rows = sqlx::query(&trim_sql)
+                    let trim_rows = sqlx::query(sqlx::AssertSqlSafe(trim_sql.as_str()))
                         .bind(&record.app_id)
                         .bind(&record.channel)
                         .bind(&serials)
@@ -874,7 +877,7 @@ impl PostgresHistoryStore {
             "#,
             tables.entries
         );
-        let aggregates = sqlx::query(&aggregates_sql)
+        let aggregates = sqlx::query(sqlx::AssertSqlSafe(aggregates_sql.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .fetch_one(&mut *tx)
@@ -910,7 +913,7 @@ impl PostgresHistoryStore {
             "#,
             tables.streams
         );
-        sqlx::query(&update_sql)
+        sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(retained_messages as i64)
@@ -930,7 +933,7 @@ impl PostgresHistoryStore {
             "UPDATE {} SET next_serial = GREATEST(next_serial, $3) WHERE app_id = $1 AND channel = $2",
             tables.streams
         );
-        sqlx::query(&next_serial_sql)
+        sqlx::query(sqlx::AssertSqlSafe(next_serial_sql.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(record.serial.saturating_add(1) as i64)
@@ -978,7 +981,7 @@ impl PostgresHistoryStore {
             "SELECT stream_id, next_serial, retained_messages, retained_bytes, oldest_available_serial, newest_available_serial, oldest_available_published_at_ms, newest_available_published_at_ms, durable_state, durable_state_reason, durable_state_node_id, durable_state_changed_at_ms FROM {} WHERE app_id = $1 AND channel = $2",
             self.tables.streams
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_optional(&self.pool)
@@ -1097,7 +1100,7 @@ impl PostgresHistoryStore {
             "#,
             tables.entries
         );
-        let aggregates = sqlx::query(&aggregates_sql)
+        let aggregates = sqlx::query(sqlx::AssertSqlSafe(aggregates_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_one(&mut **tx)
@@ -1138,7 +1141,7 @@ impl PostgresHistoryStore {
             "#,
             tables.streams
         );
-        sqlx::query(&update_sql)
+        sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(retained.retained_messages as i64)
@@ -1180,7 +1183,7 @@ impl HistoryStore for PostgresHistoryStore {
             self.tables.streams, self.tables.streams
         );
         let stream_id = uuid::Uuid::new_v4().to_string();
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(stream_id)
@@ -1333,7 +1336,7 @@ impl HistoryStore for PostgresHistoryStore {
             order,
             request.limit + 1
         );
-        let mut query = sqlx::query(&sql)
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&request.app_id)
             .bind(&request.channel);
         if let Some(stream_id) = bind_stream {
@@ -1415,7 +1418,7 @@ impl HistoryStore for PostgresHistoryStore {
             "#,
             self.tables.streams
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .fetch_one(&self.pool)
             .await
             .map_err(|e| Error::Internal(format!("Failed to read history runtime status: {e}")))?;
@@ -1472,7 +1475,7 @@ impl HistoryStore for PostgresHistoryStore {
             "DELETE FROM {} WHERE app_id = $1 AND channel = $2 RETURNING payload_size_bytes",
             self.tables.entries
         );
-        let deleted_rows = sqlx::query(&delete_sql)
+        let deleted_rows = sqlx::query(sqlx::AssertSqlSafe(delete_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_all(&mut *tx)
@@ -1512,7 +1515,7 @@ impl HistoryStore for PostgresHistoryStore {
             "#,
             self.tables.streams
         );
-        sqlx::query(&upsert_sql)
+        sqlx::query(sqlx::AssertSqlSafe(upsert_sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(&new_stream_id)
@@ -1585,7 +1588,9 @@ impl HistoryStore for PostgresHistoryStore {
                 self.tables.entries
             ),
         };
-        let mut query = sqlx::query(&delete_sql).bind(app_id).bind(channel);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(delete_sql.as_str()))
+            .bind(app_id)
+            .bind(channel);
         match request.mode {
             HistoryPurgeMode::All => {}
             HistoryPurgeMode::BeforeSerial => {
@@ -1668,7 +1673,7 @@ impl HistoryStore for PostgresHistoryStore {
             "#,
             table = self.tables.entries
         );
-        let rows_deleted = sqlx::query(&sql)
+        let rows_deleted = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(before_ms)
             .bind(batch_size as i64)
             .execute(&self.pool)
@@ -1858,7 +1863,7 @@ async fn mark_channel_degraded(
         "#,
         tables.streams
     );
-    if let Err(err) = sqlx::query(&update_sql)
+    if let Err(err) = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
         .bind(request.app_id)
         .bind(request.channel)
         .bind(state.durable_state.as_str())
@@ -2194,9 +2199,12 @@ impl PostgresVersionStore {
         lock_postgres_schema(&mut conn, "sockudo_version_schema").await?;
         let result: Result<()> = async {
             for sql in ddl {
-                sqlx::query(&sql).execute(&mut *conn).await.map_err(|e| {
-                    Error::Internal(format!("Failed to initialize version store tables: {e}"))
-                })?;
+                sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| {
+                        Error::Internal(format!("Failed to initialize version store tables: {e}"))
+                    })?;
             }
             Ok(())
         }
@@ -2227,7 +2235,7 @@ impl VersionStore for PostgresVersionStore {
             "#,
             t = self.tables.version_streams
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(now_ms)
@@ -2272,7 +2280,7 @@ impl VersionStore for PostgresVersionStore {
             "#,
             t = self.tables.version_streams
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(initial_next)
@@ -2310,7 +2318,7 @@ impl VersionStore for PostgresVersionStore {
             "#,
             t = self.tables.version_entries
         );
-        sqlx::query(&insert_entry)
+        sqlx::query(sqlx::AssertSqlSafe(insert_entry.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(record.message_serial().as_str())
@@ -2346,7 +2354,7 @@ impl VersionStore for PostgresVersionStore {
             "#,
             t = self.tables.version_messages
         );
-        sqlx::query(&upsert_msg)
+        sqlx::query(sqlx::AssertSqlSafe(upsert_msg.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(record.message_serial().as_str())
@@ -2375,7 +2383,7 @@ impl VersionStore for PostgresVersionStore {
             "#,
             t = self.tables.version_streams
         );
-        sqlx::query(&update_stream)
+        sqlx::query(sqlx::AssertSqlSafe(update_stream.as_str()))
             .bind(&record.app_id)
             .bind(&record.channel)
             .bind(record.delivery_serial() as i64)
@@ -2402,7 +2410,7 @@ impl VersionStore for PostgresVersionStore {
             "#,
             self.tables.version_entries
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .bind(message_serial.as_str())
@@ -2436,7 +2444,7 @@ impl VersionStore for PostgresVersionStore {
                 "SELECT payload_bytes FROM {} WHERE app_id = $1 AND channel = $2 AND message_serial = $3 AND version_serial {} $4 ORDER BY version_serial {} LIMIT $5",
                 self.tables.version_entries, cursor_op, order_dir
             );
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(&request.app_id)
                 .bind(&request.channel)
                 .bind(request.message_serial.as_str())
@@ -2450,7 +2458,7 @@ impl VersionStore for PostgresVersionStore {
                 "SELECT payload_bytes FROM {} WHERE app_id = $1 AND channel = $2 AND message_serial = $3 ORDER BY version_serial {} LIMIT $4",
                 self.tables.version_entries, order_dir
             );
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(&request.app_id)
                 .bind(&request.channel)
                 .bind(request.message_serial.as_str())
@@ -2502,7 +2510,7 @@ impl VersionStore for PostgresVersionStore {
             "#,
             self.tables.version_entries
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&request.app_id)
             .bind(&request.channel)
             .bind(request.after_delivery_serial as i64)
@@ -2539,7 +2547,7 @@ impl VersionStore for PostgresVersionStore {
             vm = self.tables.version_messages,
             ve = self.tables.version_entries
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_all(&self.pool)
@@ -2560,7 +2568,7 @@ impl VersionStore for PostgresVersionStore {
             "SELECT next_delivery_serial, oldest_available_delivery_serial, newest_available_delivery_serial FROM {} WHERE app_id = $1 AND channel = $2",
             self.tables.version_streams
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(app_id)
             .bind(channel)
             .fetch_optional(&self.pool)
@@ -2594,7 +2602,7 @@ impl VersionStore for PostgresVersionStore {
             "DELETE FROM {0} WHERE ctid IN (SELECT ctid FROM {0} WHERE created_at_ms < $1 ORDER BY created_at_ms ASC LIMIT $2)",
             self.tables.version_entries
         );
-        let entries_deleted = sqlx::query(&entries_sql)
+        let entries_deleted = sqlx::query(sqlx::AssertSqlSafe(entries_sql.as_str()))
             .bind(before_ms)
             .bind(limit)
             .execute(&self.pool)
@@ -2606,7 +2614,7 @@ impl VersionStore for PostgresVersionStore {
             "DELETE FROM {0} WHERE ctid IN (SELECT ctid FROM {0} WHERE updated_at_ms < $1 ORDER BY updated_at_ms ASC LIMIT $2)",
             self.tables.version_messages
         );
-        let messages_deleted = sqlx::query(&messages_sql)
+        let messages_deleted = sqlx::query(sqlx::AssertSqlSafe(messages_sql.as_str()))
             .bind(before_ms)
             .bind(limit)
             .execute(&self.pool)
@@ -2631,7 +2639,7 @@ async fn refresh_history_state_metrics(
         "SELECT COALESCE(SUM(CASE WHEN durable_state <> 'healthy' THEN 1 ELSE 0 END), 0) AS degraded_channels, COALESCE(SUM(CASE WHEN durable_state = 'reset_required' THEN 1 ELSE 0 END), 0) AS reset_required_channels FROM {} WHERE app_id = $1",
         tables.streams
     );
-    let row = sqlx::query(&sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(app_id)
         .fetch_one(pool)
         .await

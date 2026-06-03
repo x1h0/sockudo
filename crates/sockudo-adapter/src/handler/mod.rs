@@ -1,7 +1,6 @@
 // src/adapter/handler/mod.rs
 #[cfg(feature = "ai-transport")]
 pub mod ai_observability;
-#[cfg(feature = "ai-transport")]
 pub mod ai_orphans;
 pub mod annotations;
 pub mod auth_tokens;

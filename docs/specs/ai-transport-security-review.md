@@ -20,7 +20,12 @@ Sockudo AI Transport is exposed to hostile multi-tenant internet clients. Attack
 | Push credentials | New push credential writes require `PUSH_CREDENTIAL_ENCRYPTION_KEY` and always store AES-GCM envelopes. Legacy local plaintext envelopes remain readable only for migration/rotation. |
 | Limiter cleanup | Per-socket `channel_history` semaphores are removed on socket cleanup. |
 | Presence update limiters | Presence update rate limiters are scoped to socket lifetime while retaining per `(app, channel, user)` counters inside the limiter. |
+| Pending presence removals | Ungraceful disconnect grace periods use one bounded deadline worker and a per-channel pending-member index instead of one sleeper task per disconnect plus global scans. |
+| AI admission counters | Open streaming-message admission uses the active-stream counter, and append-count admission uses a cache-backed per-message counter with rollback before persistence; absent counters bootstrap once from existing version-store state. |
+| Orphan scanning | AI stream orphan cleanup uses paged cache cursor scans across the active-stream registry instead of repeatedly scanning a fixed prefix page. |
+| AuthZ regression | A table-driven server regression enumerates all AI Transport operation families against every principal class with stable allow/deny codes. |
 | Parser smoke | CI fuzz smoke covers AI header validation, generic wire-message deserialization, capability maps, history cursors, push payload mapping, and mutation requests; seed corpora are committed. |
+| Supply chain | JWT signing now uses the `aws_lc_rs` backend, native WebPush VAPID JWT signing avoids the RustCrypto RSA path, SQLx is on the 0.9 line, and `deny.toml` gates the audited AI Transport release feature graph. |
 
 ## AuthZ Matrix Summary
 
@@ -39,16 +44,24 @@ Sockudo AI Transport is exposed to hostile multi-tenant internet clients. Attack
 | Push subscribe | Deny without device token | Signed app HTTP or push-subscribe device flow | Signed app HTTP or push-subscribe device flow | Not accepted as app auth | Deny | Allow signed app HTTP | Deny |
 | Token revocation admin | Deny | Signed app HTTP only | Signed app HTTP only | Not accepted as app auth | Deny | Allow signed app HTTP | Deny |
 
-## GA Blockers
+## Release Gate
 
-No residual security risk is accepted for GA. Items below are blockers, not waivers.
+No residual AI Transport security risk is accepted for release. The previously listed release
+blockers are closed in code by the mitigations above. "Release blocker" here means a defect or
+unverified security condition that must be fixed before the AI Transport surface can be shipped.
 
-| Blocker | Required closure |
-| --- | --- |
-| Pending presence removals still use one delayed task per ungraceful disconnect and a global pending map scan. | Replace with bounded timer-wheel/per-channel index before GA. |
-| Open-stream and append-count admission still read historical state (`latest_by_history`, `get_versions`) rather than constant-time counters. | Add authoritative counters with tests and benchmarks before GA. |
-| AI orphan janitor scans a fixed prefix limit without cursoring across all active-stream keys. | Add a cursor/sharded cache scan API and sweep implementation before GA. |
-| Full authZ matrix is summarized here, but a generated table-driven integration suite for every principal/operation pair is still incomplete. | Land generated table-driven integration tests before GA. |
+The committed `deny.toml` intentionally checks the AI Transport release graph:
+
+- `sockudo/ai-transport`
+- `sockudo/push`
+- `sockudo/push-fcm`
+- `sockudo/push-apns`
+- `sockudo/push-webpush`
+- `sockudo/mysql`
+- `sockudo/postgres`
+
+That graph excludes unrelated optional datastore and queue backends such as SurrealDB and Iggy.
+Separate full-feature compilation still verifies those optional backends build.
 
 ## Verification Notes
 
@@ -63,6 +76,7 @@ Focused checks run during this pass:
 - `cargo check -p sockudo --features ai-transport,push,push-fcm,push-apns,push-webpush`
 - `cargo check -p sockudo-adapter --features ai-transport,full`
 - `cargo check -p sockudo-app --features mysql,postgres`
+- `cargo test -p sockudo-cache increment_by_serializes_concurrent_updates`
 
 Full checks run during this pass:
 
@@ -71,9 +85,14 @@ Full checks run during this pass:
 - `cargo fmt --all -- --check`
 - `git diff --check`
 - `cargo audit`
+- `cargo deny check`
+- `cargo check -p sockudo --features full`
+- `cargo check --manifest-path fuzz/Cargo.toml`
+- AI release graph absence checks for `rsa` and `paste` with `cargo tree -i`
 
-`cargo audit` completed with the repository's existing allowed warnings for unmaintained `paste`
-and yanked `aes` through push dependencies. `cargo deny check advisories bans sources licenses`
-was attempted, but the repository has no deny config; the default policy fails broadly on license
-allow-listing and reports the existing `rsa` advisory through `jsonwebtoken`. Miri was not run in
-this pass.
+`cargo audit` exits successfully. It still reports the repository's existing allowed
+unmaintained-`paste` warning through the optional Iggy backend, which is outside the AI Transport
+release graph above. The AI release graph does not include `paste` or `rsa`. `cargo deny check`
+passes for that graph with advisories, bans, licenses, and sources all OK; cargo-deny still emits
+metadata warnings because workspace crates use `license-file` rather than a manifest `license`
+expression. Miri was not run in this pass.

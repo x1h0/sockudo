@@ -438,7 +438,7 @@ macro_rules! impl_common_sql_traits {
                     $json_cast,
                     upsert_credential_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&credential.app_id)
                     .bind(&credential.credential_id)
                     .bind(provider_label(credential.provider))
@@ -460,7 +460,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT encrypted_material FROM push_provider_credentials WHERE app_id = {0} AND credential_id = {0}",
                     $bind
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(credential_id)
                     .fetch_optional(&self.$pool)
@@ -476,7 +476,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT credential_id, encrypted_material FROM push_provider_credentials WHERE app_id = {0} AND credential_id > {0} ORDER BY credential_id LIMIT {0}",
                     $bind
                 ), $postgres);
-                let rows = sqlx::query(&q)
+                let rows = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(start.unwrap_or_default())
                     .bind(limit_plus_one(limit))
@@ -502,7 +502,7 @@ macro_rules! impl_common_sql_traits {
                     $json_cast,
                     upsert_template_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&template.app_id)
                     .bind(&template.template_id)
                     .bind(&template.default_locale)
@@ -521,7 +521,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT app_id, template_id, default_locale, {1} AS locales_json, {2} AS provider_overrides_json FROM push_notification_templates WHERE app_id = {0} AND template_id = {0}",
                     $bind, json_text_expr("locales_json", $json_text), json_text_expr("provider_overrides_json", $json_text)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(template_id)
                     .fetch_optional(&self.$pool)
@@ -537,7 +537,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT app_id, template_id, default_locale, {1} AS locales_json, {2} AS provider_overrides_json FROM push_notification_templates WHERE app_id = {0} AND template_id > {0} ORDER BY template_id LIMIT {0}",
                     $bind, json_text_expr("locales_json", $json_text), json_text_expr("provider_overrides_json", $json_text)
                 ), $postgres);
-                let rows = sqlx::query(&q)
+                let rows = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(start.unwrap_or_default())
                     .bind(limit_plus_one(limit))
@@ -551,7 +551,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn delete_template(&self, app_id: &str, template_id: &str) -> PushStorageResult<DeleteDeviceOutcome> {
                 let q = sql_query(format!("DELETE FROM push_notification_templates WHERE app_id = {0} AND template_id = {0}", $bind), $postgres);
-                delete_result(sqlx::query(&q).bind(app_id).bind(template_id).execute(&self.$pool).await.map_err(sql_error)?.rows_affected())
+                delete_result(sqlx::query(sqlx::AssertSqlSafe(q.as_str())).bind(app_id).bind(template_id).execute(&self.$pool).await.map_err(sql_error)?.rows_affected())
             }
         }
 
@@ -562,7 +562,7 @@ macro_rules! impl_common_sql_traits {
                     "INSERT INTO push_publish_status (app_id, publish_id, state, counters_json, error_reason, created_at_ms, updated_at_ms) VALUES ({0}, {0}, {0}, {1}, {0}, {0}, {0}) {2}",
                     $bind, $json_cast, upsert_status_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&status.app_id)
                     .bind(&status.publish_id)
                     .bind(format!("{:?}", status.state).to_ascii_lowercase())
@@ -578,7 +578,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn get_publish_status(&self, app_id: &str, publish_id: &str) -> PushStorageResult<Option<PublishStatus>> {
                 let q = sql_query(format!("SELECT {1} AS counters_json FROM push_publish_status WHERE app_id = {0} AND publish_id = {0}", $bind, json_text_expr("counters_json", $json_text)), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(publish_id)
                     .fetch_optional(&self.$pool)
@@ -596,7 +596,7 @@ macro_rules! impl_common_sql_traits {
                     "INSERT INTO push_publish_log (app_id, publish_id, occurred_at_ms, event_id, event_json) VALUES ({0}, {0}, {0}, {0}, {1}) {2}",
                     $bind, $json_cast, upsert_publish_log_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&event.app_id)
                     .bind(&event.publish_id)
                     .bind(event.occurred_at_ms as i64)
@@ -615,7 +615,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT occurred_at_ms, event_id, {1} AS event_json FROM push_publish_log WHERE app_id = {0} AND (occurred_at_ms, event_id) > ({0}, {0}) ORDER BY occurred_at_ms, event_id LIMIT {0}",
                     $bind, json_text_expr("event_json", $json_text)
                 ), $postgres);
-                let rows = sqlx::query(&q)
+                let rows = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(cursor_ms)
                     .bind(cursor_event_id)
@@ -638,7 +638,7 @@ macro_rules! impl_common_sql_traits {
                     "INSERT INTO push_fanout_shards (app_id, publish_id, shard_id, shard_json, updated_at_ms) VALUES ({0}, {0}, {0}, {1}, {0}) {2}",
                     $bind, $json_cast, upsert_shard_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&shard.app_id)
                     .bind(&shard.publish_id)
                     .bind(&shard.shard_id)
@@ -652,7 +652,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn get_fanout_shard(&self, app_id: &str, publish_id: &str, shard_id: &str) -> PushStorageResult<Option<ShardJob>> {
                 let q = sql_query(format!("SELECT {1} AS shard_json FROM push_fanout_shards WHERE app_id = {0} AND publish_id = {0} AND shard_id = {0}", $bind, json_text_expr("shard_json", $json_text)), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(publish_id)
                     .bind(shard_id)
@@ -671,7 +671,7 @@ macro_rules! impl_common_sql_traits {
                     "INSERT INTO push_scheduled_jobs (app_id, publish_id, due_minute_ms, due_at_ms, payload_json, state, created_at_ms, updated_at_ms) VALUES ({0}, {0}, {0}, {0}, {1}, 'pending', {0}, {0}) {2}",
                     $bind, $json_cast, upsert_schedule_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&job.app_id)
                     .bind(&job.publish_id)
                     .bind(job.due_minute_ms as i64)
@@ -687,7 +687,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn get_scheduled_job(&self, app_id: &str, publish_id: &str) -> PushStorageResult<Option<ScheduledPushJob>> {
                 let q = sql_query(format!("SELECT app_id, publish_id, due_minute_ms, due_at_ms, {1} AS payload_json FROM push_scheduled_jobs WHERE app_id = {0} AND publish_id = {0}", $bind, json_text_expr("payload_json", $json_text)), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(publish_id)
                     .fetch_optional(&self.$pool)
@@ -699,7 +699,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn delete_scheduled_job(&self, app_id: &str, publish_id: &str) -> PushStorageResult<DeleteDeviceOutcome> {
                 let q = sql_query(format!("DELETE FROM push_scheduled_jobs WHERE app_id = {0} AND publish_id = {0}", $bind), $postgres);
-                delete_result(sqlx::query(&q).bind(app_id).bind(publish_id).execute(&self.$pool).await.map_err(sql_error)?.rows_affected())
+                delete_result(sqlx::query(sqlx::AssertSqlSafe(q.as_str())).bind(app_id).bind(publish_id).execute(&self.$pool).await.map_err(sql_error)?.rows_affected())
             }
 
             async fn list_scheduled_apps(&self) -> PushStorageResult<Vec<String>> {
@@ -719,7 +719,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT app_id, publish_id, due_minute_ms, due_at_ms, {1} AS payload_json FROM push_scheduled_jobs WHERE app_id = {0} AND due_minute_ms <= {0} AND (due_at_ms, publish_id) > ({0}, {0}) ORDER BY due_at_ms, publish_id LIMIT {0}",
                     $bind, json_text_expr("payload_json", $json_text)
                 ), $postgres);
-                let rows = sqlx::query(&q)
+                let rows = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(due_minute_ms as i64)
                     .bind(cursor_due_ms)
@@ -743,7 +743,7 @@ macro_rules! impl_common_sql_traits {
                     "INSERT INTO push_delivery_events (app_id, publish_id, occurred_at_ms, event_id, provider, outcome, result_json) VALUES ({0}, {0}, {0}, {0}, {0}, {0}, {1}) {2}",
                     $bind, $json_cast, upsert_delivery_event_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&event.app_id)
                     .bind(&event.publish_id)
                     .bind(event.occurred_at_ms as i64)
@@ -764,7 +764,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT occurred_at_ms, event_id, {1} AS result_json FROM push_delivery_events WHERE app_id = {0} AND publish_id = {0} AND (occurred_at_ms, event_id) > ({0}, {0}) ORDER BY occurred_at_ms, event_id LIMIT {0}",
                     $bind, json_text_expr("result_json", $json_text)
                 ), $postgres);
-                let rows = sqlx::query(&q)
+                let rows = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(publish_id)
                     .bind(cursor_ms)
@@ -782,7 +782,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn purge_delivery_events_before(&self, app_id: &str, before_ms: u64) -> PushStorageResult<u64> {
                 let q = sql_query(format!("DELETE FROM push_delivery_events WHERE app_id = {0} AND occurred_at_ms < {0}", $bind), $postgres);
-                Ok(sqlx::query(&q).bind(app_id).bind(before_ms as i64).execute(&self.$pool).await.map_err(sql_error)?.rows_affected())
+                Ok(sqlx::query(sqlx::AssertSqlSafe(q.as_str())).bind(app_id).bind(before_ms as i64).execute(&self.$pool).await.map_err(sql_error)?.rows_affected())
             }
         }
 
@@ -793,7 +793,7 @@ macro_rules! impl_common_sql_traits {
                     "INSERT INTO push_idempotency (app_id, idempotency_key, publish_id, expires_at_ms, created_at_ms) VALUES ({0}, {0}, {0}, {0}, {0}) {1}",
                     $bind, ignore_conflict_clause($postgres)
                 ), $postgres);
-                let result = sqlx::query(&q)
+                let result = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&record.app_id)
                     .bind(&record.key)
                     .bind(&record.publish_id)
@@ -807,7 +807,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn get_idempotency_record(&self, app_id: &str, key: &str) -> PushStorageResult<Option<IdempotencyRecord>> {
                 let q = sql_query(format!("SELECT app_id, idempotency_key, publish_id, expires_at_ms FROM push_idempotency WHERE app_id = {0} AND idempotency_key = {0}", $bind), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(key)
                     .fetch_optional(&self.$pool)
@@ -831,7 +831,7 @@ macro_rules! impl_common_sql_traits {
                         "INSERT INTO push_scheduler_locks (app_id, publish_id, owner_id, expires_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT (app_id, publish_id) DO UPDATE SET owner_id = EXCLUDED.owner_id, expires_at_ms = EXCLUDED.expires_at_ms, updated_at_ms = EXCLUDED.updated_at_ms WHERE push_scheduler_locks.expires_at_ms <= ? OR push_scheduler_locks.owner_id = ? RETURNING owner_id".to_owned(),
                         true,
                     );
-                    let row = sqlx::query(&q)
+                    let row = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                         .bind(&lock.app_id)
                         .bind(&lock.publish_id)
                         .bind(&lock.owner_id)
@@ -878,7 +878,7 @@ macro_rules! impl_common_sql_traits {
 
             async fn release_scheduler_lock(&self, app_id: &str, publish_id: &str, owner_id: &str) -> PushStorageResult<()> {
                 let q = sql_query(format!("DELETE FROM push_scheduler_locks WHERE app_id = {0} AND publish_id = {0} AND owner_id = {0}", $bind), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(publish_id)
                     .bind(owner_id)
@@ -896,7 +896,7 @@ macro_rules! impl_common_sql_traits {
                     "INSERT INTO push_operator_invalidations (app_id, occurred_at_ms, event_id, subject) VALUES ({0}, {0}, {0}, {0}) {1}",
                     $bind, ignore_conflict_clause($postgres)
                 ), $postgres);
-                sqlx::query(&q)
+                sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(&event.app_id)
                     .bind(event.occurred_at_ms as i64)
                     .bind(&event.event_id)
@@ -914,7 +914,7 @@ macro_rules! impl_common_sql_traits {
                     "SELECT app_id, occurred_at_ms, event_id, subject FROM push_operator_invalidations WHERE app_id = {0} AND (occurred_at_ms, event_id) > ({0}, {0}) ORDER BY occurred_at_ms, event_id LIMIT {0}",
                     $bind
                 ), $postgres);
-                let rows = sqlx::query(&q)
+                let rows = sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
                     .bind(app_id)
                     .bind(cursor_ms)
                     .bind(cursor_event_id)

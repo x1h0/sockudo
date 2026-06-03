@@ -31,6 +31,10 @@ fn pending_presence_key(app_id: &str, channel: &str, user_id: &str) -> String {
     format!("{app_id}:{channel}:{user_id}")
 }
 
+fn pending_presence_channel_key(app_id: &str, channel: &str) -> String {
+    format!("{app_id}:{channel}")
+}
+
 #[derive(Debug, Clone)]
 struct PendingPresenceMember {
     member: PresenceMemberInfo,
@@ -71,6 +75,7 @@ fn is_v2_only_protocol_event(message: &PusherMessage) -> bool {
 pub struct LocalAdapter {
     pub namespaces: Arc<DashMap<String, Arc<Namespace>>>,
     pending_presence_members: Arc<DashMap<String, PendingPresenceMember>>,
+    pending_presence_by_channel: Arc<DashMap<String, Arc<DashMap<String, ()>>>>,
     pub buffer_multiplier_per_cpu: usize,
     pub max_concurrent: usize,
     // Global semaphore to limit total concurrent broadcast operations across all channels
@@ -98,6 +103,7 @@ impl Clone for LocalAdapter {
         Self {
             namespaces: Arc::clone(&self.namespaces),
             pending_presence_members: Arc::clone(&self.pending_presence_members),
+            pending_presence_by_channel: Arc::clone(&self.pending_presence_by_channel),
             buffer_multiplier_per_cpu: self.buffer_multiplier_per_cpu,
             max_concurrent: self.max_concurrent,
             broadcast_semaphore: Arc::clone(&self.broadcast_semaphore),
@@ -162,6 +168,7 @@ impl LocalAdapter {
         Self {
             namespaces: Arc::new(DashMap::new()),
             pending_presence_members: Arc::new(DashMap::new()),
+            pending_presence_by_channel: Arc::new(DashMap::new()),
             buffer_multiplier_per_cpu: multiplier,
             max_concurrent,
             broadcast_semaphore: Arc::new(Semaphore::new(max_concurrent * 8)),
@@ -209,6 +216,20 @@ impl LocalAdapter {
     #[inline]
     pub fn get_app_manager(&self) -> Option<&Arc<dyn AppManager + Send + Sync>> {
         self.app_manager.get()
+    }
+
+    fn remove_pending_presence_index_entry(&self, app_id: &str, channel: &str, pending_key: &str) {
+        let channel_key = pending_presence_channel_key(app_id, channel);
+        let should_remove_channel = self
+            .pending_presence_by_channel
+            .get(&channel_key)
+            .is_some_and(|index| {
+                index.remove(pending_key);
+                index.is_empty()
+            });
+        if should_remove_channel {
+            self.pending_presence_by_channel.remove(&channel_key);
+        }
     }
 }
 
@@ -1744,9 +1765,12 @@ impl ConnectionManager for LocalAdapter {
             None => Ok(HashMap::new()),
         }?;
 
-        let prefix = format!("{app_id}:{channel}:");
-        for pending in self.pending_presence_members.iter() {
-            if pending.key().starts_with(&prefix) {
+        let channel_key = pending_presence_channel_key(app_id, channel);
+        if let Some(index) = self.pending_presence_by_channel.get(&channel_key) {
+            for pending_key in index.iter() {
+                let Some(pending) = self.pending_presence_members.get(pending_key.key()) else {
+                    continue;
+                };
                 members
                     .entry(pending.member.user_id.clone())
                     .or_insert_with(|| pending.member.clone());
@@ -1926,8 +1950,9 @@ impl ConnectionManager for LocalAdapter {
         user_info: Option<sonic_rs::Value>,
         generation: u64,
     ) -> Result<()> {
+        let pending_key = pending_presence_key(app_id, channel, user_id);
         self.pending_presence_members.insert(
-            pending_presence_key(app_id, channel, user_id),
+            pending_key.clone(),
             PendingPresenceMember {
                 member: PresenceMemberInfo {
                     user_id: user_id.to_string(),
@@ -1937,6 +1962,10 @@ impl ConnectionManager for LocalAdapter {
                 generation,
             },
         );
+        self.pending_presence_by_channel
+            .entry(pending_presence_channel_key(app_id, channel))
+            .or_insert_with(|| Arc::new(DashMap::new()))
+            .insert(pending_key, ());
         Ok(())
     }
 
@@ -1946,10 +1975,13 @@ impl ConnectionManager for LocalAdapter {
         channel: &str,
         user_id: &str,
     ) -> Result<Option<String>> {
-        Ok(self
+        let pending_key = pending_presence_key(app_id, channel, user_id);
+        let removed = self
             .pending_presence_members
-            .remove(&pending_presence_key(app_id, channel, user_id))
-            .map(|(_, pending)| pending.socket_id))
+            .remove(&pending_key)
+            .map(|(_, pending)| pending.socket_id);
+        self.remove_pending_presence_index_entry(app_id, channel, &pending_key);
+        Ok(removed)
     }
 
     async fn remove_pending_presence_member(
@@ -1960,10 +1992,14 @@ impl ConnectionManager for LocalAdapter {
         generation: u64,
     ) -> Result<Option<PresenceMemberInfo>> {
         let key = pending_presence_key(app_id, channel, user_id);
-        Ok(self
+        let removed = self
             .pending_presence_members
             .remove_if(&key, |_, pending| pending.generation == generation)
-            .map(|(_, pending)| pending.member))
+            .map(|(_, pending)| pending.member);
+        if removed.is_some() {
+            self.remove_pending_presence_index_entry(app_id, channel, &key);
+        }
+        Ok(removed)
     }
 
     async fn terminate_user_connections(&self, app_id: &str, user_id: &str) -> Result<()> {
