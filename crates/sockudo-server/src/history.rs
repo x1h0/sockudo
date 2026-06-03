@@ -20,7 +20,7 @@ use sockudo_core::options::{VersionStoreDriver, VersionedMessagesConfig};
 use sockudo_core::version_store::{
     StoredVersionRecord, VersionReplayRequest, VersionStore, VersionStoreCursor,
     VersionStoreDirection, VersionStorePage, VersionStoreReadRequest, VersionStreamState,
-    VersionWriteReservation,
+    VersionWriteReservation, VersionWriteReservationBlock,
 };
 use std::sync::Arc;
 #[cfg(feature = "postgres")]
@@ -39,7 +39,7 @@ use sonic_rs::JsonValueTrait;
 #[cfg(feature = "postgres")]
 use sonic_rs::json;
 #[cfg(feature = "postgres")]
-use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+use sqlx::{PgConnection, PgPool, Row, postgres::PgPoolOptions};
 #[cfg(feature = "dynamodb")]
 #[path = "history_dynamodb.rs"]
 mod history_dynamodb;
@@ -52,6 +52,26 @@ mod history_scylla;
 #[cfg(feature = "surrealdb")]
 #[path = "history_surreal.rs"]
 mod history_surreal;
+
+#[cfg(feature = "postgres")]
+async fn lock_postgres_schema(conn: &mut PgConnection, lock_name: &str) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
+        .bind(lock_name)
+        .execute(conn)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to lock PostgreSQL schema init: {e}")))?;
+    Ok(())
+}
+
+#[cfg(feature = "postgres")]
+async fn unlock_postgres_schema(conn: &mut PgConnection, lock_name: &str) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 0))")
+        .bind(lock_name)
+        .execute(conn)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to unlock PostgreSQL schema init: {e}")))?;
+    Ok(())
+}
 
 pub async fn create_history_store(
     history_config: &HistoryConfig,
@@ -570,7 +590,7 @@ impl PostgresHistoryStore {
             self.tables.streams
         );
 
-        for sql in [
+        let ddl = [
             create_streams,
             create_entries,
             index_serial,
@@ -597,11 +617,25 @@ impl PostgresHistoryStore {
             add_durable_reason,
             add_durable_node_id,
             add_durable_changed_at,
-        ] {
-            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
-                Error::Internal(format!("Failed to initialize history tables: {e}"))
-            })?;
+        ];
+
+        let mut conn = self.pool.acquire().await.map_err(|e| {
+            Error::Internal(format!(
+                "Failed to acquire PostgreSQL schema initialization connection: {e}"
+            ))
+        })?;
+        lock_postgres_schema(&mut conn, "sockudo_history_schema").await?;
+        let result: Result<()> = async {
+            for sql in ddl {
+                sqlx::query(&sql).execute(&mut *conn).await.map_err(|e| {
+                    Error::Internal(format!("Failed to initialize history tables: {e}"))
+                })?;
+            }
+            Ok(())
         }
+        .await;
+        unlock_postgres_schema(&mut conn, "sockudo_history_schema").await?;
+        result?;
 
         Ok(())
     }
@@ -2139,7 +2173,7 @@ impl PostgresVersionStore {
             self.tables.version_messages
         );
 
-        for sql in [
+        let ddl = [
             create_version_streams,
             create_version_messages,
             create_version_entries,
@@ -2150,11 +2184,25 @@ impl PostgresVersionStore {
             idx_entries_history,
             idx_entries_created_at,
             idx_messages_updated_at,
-        ] {
-            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
-                Error::Internal(format!("Failed to initialize version store tables: {e}"))
-            })?;
+        ];
+
+        let mut conn = self.pool.acquire().await.map_err(|e| {
+            Error::Internal(format!(
+                "Failed to acquire PostgreSQL version schema initialization connection: {e}"
+            ))
+        })?;
+        lock_postgres_schema(&mut conn, "sockudo_version_schema").await?;
+        let result: Result<()> = async {
+            for sql in ddl {
+                sqlx::query(&sql).execute(&mut *conn).await.map_err(|e| {
+                    Error::Internal(format!("Failed to initialize version store tables: {e}"))
+                })?;
+            }
+            Ok(())
         }
+        .await;
+        unlock_postgres_schema(&mut conn, "sockudo_version_schema").await?;
+        result?;
         Ok(())
     }
 }
@@ -2192,6 +2240,56 @@ impl VersionStore for PostgresVersionStore {
         Ok(VersionWriteReservation {
             stream_id: format!("{}/{}", app_id, channel),
             delivery_serial: row.get::<i64, _>("reserved_serial") as u64,
+        })
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        if block_size == 0 {
+            return Err(Error::InvalidMessageFormat(
+                "version delivery reservation block size must be greater than 0".to_string(),
+            ));
+        }
+        let block_size_i64 = i64::try_from(block_size).map_err(|_| {
+            Error::InvalidMessageFormat(
+                "version delivery reservation block size is too large".to_string(),
+            )
+        })?;
+        let now_ms = sockudo_core::history::now_ms();
+        let initial_next = block_size_i64.saturating_add(1);
+        let sql = format!(
+            r#"
+            INSERT INTO {t} (app_id, channel, next_delivery_serial, updated_at_ms)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (app_id, channel) DO UPDATE SET
+                next_delivery_serial = {t}.next_delivery_serial + $5,
+                updated_at_ms = EXCLUDED.updated_at_ms
+            RETURNING next_delivery_serial - $5 AS reserved_serial
+            "#,
+            t = self.tables.version_streams
+        );
+        let row = sqlx::query(&sql)
+            .bind(app_id)
+            .bind(channel)
+            .bind(initial_next)
+            .bind(now_ms)
+            .bind(block_size_i64)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| {
+                Error::Internal(format!(
+                    "Failed to reserve version delivery position block: {e}"
+                ))
+            })?;
+
+        Ok(VersionWriteReservationBlock {
+            stream_id: format!("{}/{}", app_id, channel),
+            start_delivery_serial: row.get::<i64, _>("reserved_serial") as u64,
+            len: block_size,
         })
     }
 

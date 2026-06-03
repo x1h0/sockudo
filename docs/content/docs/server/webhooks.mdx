@@ -62,6 +62,19 @@ Presence lifecycle events are:
 
 Push provider status callbacks and push lifecycle webhooks are core to operating notifications. Use them to reconcile provider outcomes with Sockudo publish status.
 
+## AI Transport webhooks
+
+AI Transport emits `ai_stream_cancelled` when the distributed orphan janitor closes a stale streaming message after `ai_transport.rollup.orphan_ttl_ms`. Enable the event type on an app webhook to receive:
+
+```json
+{
+  "name": "ai_stream_cancelled",
+  "channel": "private-ai-chat",
+  "message_serial": "00000000000000000001:node:00000000000000000001",
+  "reason": "orphan_timeout"
+}
+```
+
 Typical push events include:
 
 - publish accepted

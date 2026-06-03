@@ -2111,7 +2111,7 @@ fn is_truncated_by_retention(
 use sockudo_core::version_store::{
     StoredVersionRecord, VersionReplayRequest, VersionStore, VersionStoreCursor,
     VersionStoreDirection, VersionStorePage, VersionStoreReadRequest, VersionStreamState,
-    VersionWriteReservation,
+    VersionWriteReservation, VersionWriteReservationBlock,
 };
 
 #[cfg(feature = "versioned-messages")]
@@ -2574,6 +2574,24 @@ impl VersionStore for DynamoDbVersionStore {
         app_id: &str,
         channel: &str,
     ) -> Result<VersionWriteReservation> {
+        let block = self.reserve_delivery_positions(app_id, channel, 1).await?;
+        Ok(VersionWriteReservation {
+            stream_id: block.stream_id,
+            delivery_serial: block.start_delivery_serial,
+        })
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        if block_size == 0 {
+            return Err(Error::InvalidMessageFormat(
+                "version delivery reservation block size must be greater than 0".to_string(),
+            ));
+        }
         let app_channel = Self::app_channel_key(app_id, channel);
         loop {
             let existing = self
@@ -2592,6 +2610,7 @@ impl VersionStore for DynamoDbVersionStore {
 
             if let Some(item) = existing {
                 let current = Self::item_num(&item, "next_delivery_serial").unwrap_or(1) as u64;
+                let next = current.saturating_add(block_size);
                 let result = self
                     .client
                     .update_item()
@@ -2599,16 +2618,17 @@ impl VersionStore for DynamoDbVersionStore {
                     .key("app_channel", Self::attr_s(&app_channel))
                     .update_expression("SET next_delivery_serial = :next, updated_at_ms = :now")
                     .condition_expression("next_delivery_serial = :expected")
-                    .expression_attribute_values(":next", Self::attr_n(current + 1))
+                    .expression_attribute_values(":next", Self::attr_n(next))
                     .expression_attribute_values(":expected", Self::attr_n(current))
                     .expression_attribute_values(":now", Self::attr_n(now_ms))
                     .send()
                     .await;
                 match result {
                     Ok(_) => {
-                        return Ok(VersionWriteReservation {
+                        return Ok(VersionWriteReservationBlock {
                             stream_id: format!("{}/{}", app_id, channel),
-                            delivery_serial: current,
+                            start_delivery_serial: current,
+                            len: block_size,
                         });
                     }
                     Err(e) if e.to_string().contains("ConditionalCheckFailed") => continue,
@@ -2623,7 +2643,10 @@ impl VersionStore for DynamoDbVersionStore {
                 new_item.insert("app_channel".to_string(), Self::attr_s(&app_channel));
                 new_item.insert("app_id".to_string(), Self::attr_s(app_id));
                 new_item.insert("channel".to_string(), Self::attr_s(channel));
-                new_item.insert("next_delivery_serial".to_string(), Self::attr_n(2_u64));
+                new_item.insert(
+                    "next_delivery_serial".to_string(),
+                    Self::attr_n(block_size.saturating_add(1)),
+                );
                 new_item.insert("migration_state".to_string(), Self::attr_s("native_only"));
                 new_item.insert("updated_at_ms".to_string(), Self::attr_n(now_ms));
 
@@ -2637,9 +2660,10 @@ impl VersionStore for DynamoDbVersionStore {
                     .await;
                 match create_result {
                     Ok(_) => {
-                        return Ok(VersionWriteReservation {
+                        return Ok(VersionWriteReservationBlock {
                             stream_id: format!("{}/{}", app_id, channel),
-                            delivery_serial: 1,
+                            start_delivery_serial: 1,
+                            len: block_size,
                         });
                     }
                     Err(e) if e.to_string().contains("ConditionalCheckFailed") => continue,

@@ -1707,7 +1707,7 @@ async fn refresh_history_state_metrics(
 use sockudo_core::version_store::{
     StoredVersionRecord, VersionReplayRequest, VersionStore, VersionStoreCursor,
     VersionStoreDirection, VersionStorePage, VersionStoreReadRequest, VersionStreamState,
-    VersionWriteReservation,
+    VersionWriteReservation, VersionWriteReservationBlock,
 };
 
 #[cfg(feature = "versioned-messages")]
@@ -1946,6 +1946,82 @@ impl VersionStore for MysqlVersionStore {
         Ok(VersionWriteReservation {
             stream_id: format!("{}/{}", app_id, channel),
             delivery_serial: reserved as u64,
+        })
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        if block_size == 0 {
+            return Err(Error::InvalidMessageFormat(
+                "version delivery reservation block size must be greater than 0".to_string(),
+            ));
+        }
+        let block_size_i64 = i64::try_from(block_size).map_err(|_| {
+            Error::InvalidMessageFormat(
+                "version delivery reservation block size is too large".to_string(),
+            )
+        })?;
+        let now_ms = sockudo_core::history::now_ms();
+
+        let insert_sql = format!(
+            "INSERT IGNORE INTO `{}` (app_id, channel, next_delivery_serial, updated_at_ms) VALUES (?, ?, 1, ?)",
+            self.tables.version_streams
+        );
+        sqlx::query(&insert_sql)
+            .bind(app_id)
+            .bind(channel)
+            .bind(now_ms)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                Error::Internal(format!("Failed to initialize version stream row: {e}"))
+            })?;
+
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            Error::Internal(format!("Failed to begin version reserve transaction: {e}"))
+        })?;
+
+        let select_sql = format!(
+            "SELECT next_delivery_serial FROM `{}` WHERE app_id = ? AND channel = ? FOR UPDATE",
+            self.tables.version_streams
+        );
+        let row = sqlx::query(&select_sql)
+            .bind(app_id)
+            .bind(channel)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| {
+                Error::Internal(format!("Failed to read version stream for update: {e}"))
+            })?;
+        let reserved: i64 = row.get("next_delivery_serial");
+
+        let update_sql = format!(
+            "UPDATE `{}` SET next_delivery_serial = next_delivery_serial + ?, updated_at_ms = ? WHERE app_id = ? AND channel = ?",
+            self.tables.version_streams
+        );
+        sqlx::query(&update_sql)
+            .bind(block_size_i64)
+            .bind(now_ms)
+            .bind(app_id)
+            .bind(channel)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                Error::Internal(format!("Failed to advance version delivery serial: {e}"))
+            })?;
+
+        tx.commit().await.map_err(|e| {
+            Error::Internal(format!("Failed to commit version reserve transaction: {e}"))
+        })?;
+
+        Ok(VersionWriteReservationBlock {
+            stream_id: format!("{}/{}", app_id, channel),
+            start_delivery_serial: reserved as u64,
+            len: block_size,
         })
     }
 

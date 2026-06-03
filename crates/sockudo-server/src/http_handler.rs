@@ -2672,7 +2672,11 @@ pub async fn update_message(
 
     let reservation = handler
         .version_store()
-        .reserve_delivery_position(&path.app_id, &path.channel_name)
+        .reserve_delivery_position_after(
+            &path.app_id,
+            &path.channel_name,
+            current.delivery_serial(),
+        )
         .await?;
     let updated_message = current
         .message
@@ -2697,6 +2701,10 @@ pub async fn update_message(
     handler
         .version_store()
         .append_version(updated.clone())
+        .await?;
+    #[cfg(feature = "ai-transport")]
+    handler
+        .record_ai_stream_activity(&path.app_id, &path.channel_name, &updated)
         .await?;
 
     let runtime_message =
@@ -2826,7 +2834,11 @@ pub async fn delete_message(
 
     let reservation = handler
         .version_store()
-        .reserve_delivery_position(&path.app_id, &path.channel_name)
+        .reserve_delivery_position_after(
+            &path.app_id,
+            &path.channel_name,
+            current.delivery_serial(),
+        )
         .await?;
     let deleted_message = current
         .message
@@ -2851,6 +2863,10 @@ pub async fn delete_message(
     handler
         .version_store()
         .append_version(deleted.clone())
+        .await?;
+    #[cfg(feature = "ai-transport")]
+    handler
+        .record_ai_stream_activity(&path.app_id, &path.channel_name, &deleted)
         .await?;
 
     let runtime_message =
@@ -2981,7 +2997,11 @@ pub async fn append_message(
 
     let reservation = handler
         .version_store()
-        .reserve_delivery_position(&path.app_id, &path.channel_name)
+        .reserve_delivery_position_after(
+            &path.app_id,
+            &path.channel_name,
+            current.delivery_serial(),
+        )
         .await?;
     let appended_message = current
         .message
@@ -3008,6 +3028,10 @@ pub async fn append_message(
     handler
         .version_store()
         .append_version(appended.clone())
+        .await?;
+    #[cfg(feature = "ai-transport")]
+    handler
+        .record_ai_stream_activity(&path.app_id, &path.channel_name, &appended)
         .await?;
 
     let runtime_message =

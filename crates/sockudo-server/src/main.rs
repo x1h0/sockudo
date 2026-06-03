@@ -2803,6 +2803,16 @@ impl SockudoServer {
                 &config.database_pooling,
             )
             .await?;
+            let version_store: Arc<dyn sockudo_core::version_store::VersionStore + Send + Sync> =
+                if config.ai_transport.enabled {
+                    const AI_TRANSPORT_VERSION_SERIAL_LEASE_SIZE: u64 = 128;
+                    Arc::new(sockudo_core::version_store::LeasedVersionStore::new(
+                        version_store,
+                        AI_TRANSPORT_VERSION_SERIAL_LEASE_SIZE,
+                    ))
+                } else {
+                    version_store
+                };
 
             // Spawn the periodic purge worker for backends without native TTL
             // (MySQL, PostgreSQL, SurrealDB, Memory). ScyllaDB and DynamoDB

@@ -169,6 +169,49 @@ impl CacheManager for RedisClusterCacheManager {
         Ok(Some(Duration::from_secs(ttl as u64)))
     }
 
+    async fn scan_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<(String, String)>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let pattern = format!("{}:{}*", self.prefix, prefix);
+        let cache_prefix = format!("{}:", self.prefix);
+        let mut connection = self.connection.clone();
+        let mut keys = Vec::with_capacity(limit.min(64));
+
+        {
+            let mut iter: redis::AsyncIter<String> = connection
+                .scan_match(&pattern)
+                .await
+                .map_err(|e| Error::Cache(format!("Redis Cluster scan error: {e}")))?;
+
+            while let Some(key) = iter.next_item().await {
+                let key = key.map_err(|e| {
+                    Error::Cache(format!("Redis Cluster scan iteration error: {e}"))
+                })?;
+                keys.push(key);
+                if keys.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        let mut entries = Vec::with_capacity(keys.len());
+        for key in keys {
+            let value: Option<String> = connection
+                .get(&key)
+                .await
+                .map_err(|e| Error::Cache(format!("Redis Cluster get error: {e}")))?;
+            if let Some(value) = value
+                && let Some(unprefixed_key) = key.strip_prefix(&cache_prefix)
+            {
+                entries.push((unprefixed_key.to_string(), value));
+            }
+        }
+
+        Ok(entries)
+    }
+
     async fn set_if_not_exists(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<bool> {
         let prefixed_key = self.prefixed_key(key);
         let mut connection = self.connection.clone();

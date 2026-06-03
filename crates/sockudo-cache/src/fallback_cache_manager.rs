@@ -318,6 +318,25 @@ impl CacheManager for FallbackCacheManager {
         primary.check_health().await
     }
 
+    async fn scan_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<(String, String)>> {
+        self.try_recover().await;
+
+        let _guard = self.recovery_lock.read().await;
+
+        if self.is_using_fallback() {
+            return self.fallback.lock().await.scan_prefix(prefix, limit).await;
+        }
+
+        let primary = self.primary.lock().await;
+        match primary.scan_prefix(prefix, limit).await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                self.switch_to_fallback(&e.to_string());
+                self.fallback.lock().await.scan_prefix(prefix, limit).await
+            }
+        }
+    }
+
     async fn ttl(&self, key: &str) -> Result<Option<Duration>> {
         self.try_recover().await;
 

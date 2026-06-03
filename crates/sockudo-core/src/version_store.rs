@@ -4,11 +4,14 @@ use crate::versioned_messages::{
     MessageSerial, VersionSerial, VersionedMessage, validate_replay_continuity,
     validate_version_chain,
 };
+use ahash::AHashMap;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use tokio::sync::RwLock;
+use tokio::sync::oneshot;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -73,6 +76,24 @@ pub struct VersionWriteReservation {
     pub delivery_serial: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct VersionWriteReservationBlock {
+    pub stream_id: String,
+    pub start_delivery_serial: u64,
+    pub len: u64,
+}
+
+impl VersionWriteReservationBlock {
+    fn validate(block_size: u64) -> Result<()> {
+        if block_size == 0 {
+            return Err(Error::InvalidMessageFormat(
+                "version delivery reservation block size must be greater than 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VersionStreamState {
     pub stream_id: Option<String>,
@@ -134,6 +155,45 @@ pub trait VersionStore: Send + Sync {
         channel: &str,
     ) -> Result<VersionWriteReservation>;
 
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        VersionWriteReservationBlock::validate(block_size)?;
+        if block_size == 1 {
+            let reservation = self.reserve_delivery_position(app_id, channel).await?;
+            return Ok(VersionWriteReservationBlock {
+                stream_id: reservation.stream_id,
+                start_delivery_serial: reservation.delivery_serial,
+                len: 1,
+            });
+        }
+
+        Err(Error::Configuration(
+            "version store does not support block delivery reservations".to_string(),
+        ))
+    }
+
+    async fn reserve_delivery_position_after(
+        &self,
+        app_id: &str,
+        channel: &str,
+        after_delivery_serial: u64,
+    ) -> Result<VersionWriteReservation> {
+        for _ in 0..1024 {
+            let reservation = self.reserve_delivery_position(app_id, channel).await?;
+            if reservation.delivery_serial > after_delivery_serial {
+                return Ok(reservation);
+            }
+        }
+
+        Err(Error::Internal(format!(
+            "version store could not reserve delivery_serial greater than {after_delivery_serial}"
+        )))
+    }
+
     async fn append_version(&self, record: StoredVersionRecord) -> Result<()>;
 
     async fn get_latest(
@@ -179,6 +239,17 @@ impl VersionStore for NoopVersionStore {
         _app_id: &str,
         _channel: &str,
     ) -> Result<VersionWriteReservation> {
+        Err(Error::Configuration(
+            "Versioned message storage is not configured".to_string(),
+        ))
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        _app_id: &str,
+        _channel: &str,
+        _block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
         Err(Error::Configuration(
             "Versioned message storage is not configured".to_string(),
         ))
@@ -287,6 +358,27 @@ impl VersionStore for MemoryVersionStore {
         };
         channel_state.next_delivery_serial = channel_state.next_delivery_serial.saturating_add(1);
         Ok(reservation)
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        VersionWriteReservationBlock::validate(block_size)?;
+        let key = Self::channel_key(app_id, channel);
+        let mut channels = self.channels.write().await;
+        let channel_state = channels.entry(key).or_default();
+        let block = VersionWriteReservationBlock {
+            stream_id: channel_state.stream_id.clone(),
+            start_delivery_serial: channel_state.next_delivery_serial,
+            len: block_size,
+        };
+        channel_state.next_delivery_serial = channel_state
+            .next_delivery_serial
+            .saturating_add(block_size);
+        Ok(block)
     }
 
     async fn append_version(&self, record: StoredVersionRecord) -> Result<()> {
@@ -555,6 +647,282 @@ impl VersionStore for MemoryVersionStore {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LeaseKey {
+    app_id: String,
+    channel: String,
+}
+
+impl LeaseKey {
+    fn new(app_id: &str, channel: &str) -> Self {
+        Self {
+            app_id: app_id.to_string(),
+            channel: channel.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LeaseCursor {
+    stream_id: String,
+    next_delivery_serial: u64,
+    end_exclusive: u64,
+}
+
+impl LeaseCursor {
+    fn from_block(block: VersionWriteReservationBlock) -> Self {
+        Self {
+            stream_id: block.stream_id,
+            next_delivery_serial: block.start_delivery_serial,
+            end_exclusive: block.start_delivery_serial.saturating_add(block.len),
+        }
+    }
+
+    fn take_next(&mut self) -> Option<VersionWriteReservation> {
+        if self.next_delivery_serial >= self.end_exclusive {
+            return None;
+        }
+        let reservation = VersionWriteReservation {
+            stream_id: self.stream_id.clone(),
+            delivery_serial: self.next_delivery_serial,
+        };
+        self.next_delivery_serial = self.next_delivery_serial.saturating_add(1);
+        Some(reservation)
+    }
+}
+
+#[derive(Default)]
+struct LeaseState {
+    leases: AHashMap<LeaseKey, LeaseCursor>,
+    in_flight: AHashMap<LeaseKey, Vec<oneshot::Sender<()>>>,
+}
+
+/// Caches contiguous delivery-position blocks from an underlying [`VersionStore`].
+///
+/// The wrapper keeps the publish hot path at one store round-trip per lease
+/// instead of one store round-trip per append. A small single-flight table
+/// prevents concurrent lease misses from over-reserving unused serial ranges.
+pub struct LeasedVersionStore {
+    inner: Arc<dyn VersionStore + Send + Sync>,
+    block_size: u64,
+    state: Mutex<LeaseState>,
+}
+
+impl LeasedVersionStore {
+    #[must_use]
+    pub fn new(inner: Arc<dyn VersionStore + Send + Sync>, block_size: u64) -> Self {
+        Self {
+            inner,
+            block_size: block_size.max(1),
+            state: Mutex::new(LeaseState::default()),
+        }
+    }
+
+    fn take_cached(&self, key: &LeaseKey) -> Option<VersionWriteReservation> {
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let cursor = state.leases.get_mut(key)?;
+        let reservation = cursor.take_next();
+        if cursor.next_delivery_serial >= cursor.end_exclusive {
+            state.leases.remove(key);
+        }
+        reservation
+    }
+
+    fn take_cached_after(
+        &self,
+        key: &LeaseKey,
+        after_delivery_serial: u64,
+    ) -> Option<VersionWriteReservation> {
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let cursor = state.leases.get_mut(key)?;
+        if cursor.next_delivery_serial <= after_delivery_serial {
+            let next_after = after_delivery_serial.saturating_add(1);
+            if next_after >= cursor.end_exclusive {
+                state.leases.remove(key);
+                return None;
+            }
+            cursor.next_delivery_serial = next_after;
+        }
+
+        let reservation = cursor.take_next();
+        if cursor.next_delivery_serial >= cursor.end_exclusive {
+            state.leases.remove(key);
+        }
+        reservation
+    }
+
+    fn start_or_join_reservation(&self, key: LeaseKey) -> Option<oneshot::Receiver<()>> {
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(waiters) = state.in_flight.get_mut(&key) {
+            let (tx, rx) = oneshot::channel();
+            waiters.push(tx);
+            Some(rx)
+        } else {
+            state.in_flight.insert(key, Vec::new());
+            None
+        }
+    }
+
+    fn finish_reservation(&self, key: LeaseKey, block: VersionWriteReservationBlock) {
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        state
+            .leases
+            .insert(key.clone(), LeaseCursor::from_block(block));
+        if let Some(waiters) = state.in_flight.remove(&key) {
+            for waiter in waiters {
+                let _ = waiter.send(());
+            }
+        }
+    }
+
+    fn fail_reservation(&self, key: &LeaseKey) {
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(waiters) = state.in_flight.remove(key) {
+            for waiter in waiters {
+                let _ = waiter.send(());
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl VersionStore for LeasedVersionStore {
+    async fn reserve_delivery_position(
+        &self,
+        app_id: &str,
+        channel: &str,
+    ) -> Result<VersionWriteReservation> {
+        if self.block_size == 1 {
+            return self.inner.reserve_delivery_position(app_id, channel).await;
+        }
+
+        let key = LeaseKey::new(app_id, channel);
+        loop {
+            if let Some(reservation) = self.take_cached(&key) {
+                return Ok(reservation);
+            }
+
+            if let Some(waiter) = self.start_or_join_reservation(key.clone()) {
+                let _ = waiter.await;
+                continue;
+            }
+
+            match self
+                .inner
+                .reserve_delivery_positions(app_id, channel, self.block_size)
+                .await
+            {
+                Ok(block) => self.finish_reservation(key.clone(), block),
+                Err(err) => {
+                    self.fail_reservation(&key);
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        VersionWriteReservationBlock::validate(block_size)?;
+        let first = self.reserve_delivery_position(app_id, channel).await?;
+        let mut expected_next = first.delivery_serial.saturating_add(1);
+        for _ in 1..block_size {
+            let next = self.reserve_delivery_position(app_id, channel).await?;
+            if next.stream_id != first.stream_id || next.delivery_serial != expected_next {
+                return Err(Error::Internal(
+                    "leased version store returned a non-contiguous reservation block".to_string(),
+                ));
+            }
+            expected_next = expected_next.saturating_add(1);
+        }
+        Ok(VersionWriteReservationBlock {
+            stream_id: first.stream_id,
+            start_delivery_serial: first.delivery_serial,
+            len: block_size,
+        })
+    }
+
+    async fn reserve_delivery_position_after(
+        &self,
+        app_id: &str,
+        channel: &str,
+        after_delivery_serial: u64,
+    ) -> Result<VersionWriteReservation> {
+        let max_attempts = self.block_size.saturating_mul(2).max(64);
+        for _ in 0..max_attempts {
+            let key = LeaseKey::new(app_id, channel);
+            if let Some(reservation) = self.take_cached_after(&key, after_delivery_serial) {
+                return Ok(reservation);
+            }
+
+            if let Some(waiter) = self.start_or_join_reservation(key.clone()) {
+                let _ = waiter.await;
+                continue;
+            }
+
+            match self
+                .inner
+                .reserve_delivery_positions(app_id, channel, self.block_size)
+                .await
+            {
+                Ok(block) => self.finish_reservation(key.clone(), block),
+                Err(err) => {
+                    self.fail_reservation(&key);
+                    return Err(err);
+                }
+            }
+        }
+
+        Err(Error::Internal(format!(
+            "leased version store could not reserve delivery_serial greater than {after_delivery_serial}"
+        )))
+    }
+
+    async fn append_version(&self, record: StoredVersionRecord) -> Result<()> {
+        self.inner.append_version(record).await
+    }
+
+    async fn get_latest(
+        &self,
+        app_id: &str,
+        channel: &str,
+        message_serial: &MessageSerial,
+    ) -> Result<Option<StoredVersionRecord>> {
+        self.inner.get_latest(app_id, channel, message_serial).await
+    }
+
+    async fn get_versions(&self, request: VersionStoreReadRequest) -> Result<VersionStorePage> {
+        self.inner.get_versions(request).await
+    }
+
+    async fn replay_after(
+        &self,
+        request: VersionReplayRequest,
+    ) -> Result<Vec<StoredVersionRecord>> {
+        self.inner.replay_after(request).await
+    }
+
+    async fn latest_by_history(
+        &self,
+        app_id: &str,
+        channel: &str,
+    ) -> Result<Vec<StoredVersionRecord>> {
+        self.inner.latest_by_history(app_id, channel).await
+    }
+
+    async fn stream_state(&self, app_id: &str, channel: &str) -> Result<VersionStreamState> {
+        self.inner.stream_state(app_id, channel).await
+    }
+
+    async fn purge_before(&self, before_ms: i64, batch_size: usize) -> Result<(u64, bool)> {
+        self.inner.purge_before(before_ms, batch_size).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,6 +931,7 @@ mod tests {
         VersionMetadata, VersionSerial,
     };
     use sockudo_protocol::messages::{MessageData, MessageExtras};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn version(serial: &str, timestamp_ms: i64) -> VersionMetadata {
         VersionMetadata {
@@ -599,6 +968,82 @@ mod tests {
                     ai: None,
                 }),
             ),
+        }
+    }
+
+    struct CountingBlockVersionStore {
+        inner: MemoryVersionStore,
+        single_calls: AtomicU64,
+        block_calls: AtomicU64,
+    }
+
+    impl CountingBlockVersionStore {
+        fn new() -> Self {
+            Self {
+                inner: MemoryVersionStore::new(),
+                single_calls: AtomicU64::new(0),
+                block_calls: AtomicU64::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl VersionStore for CountingBlockVersionStore {
+        async fn reserve_delivery_position(
+            &self,
+            app_id: &str,
+            channel: &str,
+        ) -> Result<VersionWriteReservation> {
+            self.single_calls.fetch_add(1, Ordering::Relaxed);
+            self.inner.reserve_delivery_position(app_id, channel).await
+        }
+
+        async fn reserve_delivery_positions(
+            &self,
+            app_id: &str,
+            channel: &str,
+            block_size: u64,
+        ) -> Result<VersionWriteReservationBlock> {
+            self.block_calls.fetch_add(1, Ordering::Relaxed);
+            self.inner
+                .reserve_delivery_positions(app_id, channel, block_size)
+                .await
+        }
+
+        async fn append_version(&self, record: StoredVersionRecord) -> Result<()> {
+            self.inner.append_version(record).await
+        }
+
+        async fn get_latest(
+            &self,
+            app_id: &str,
+            channel: &str,
+            message_serial: &MessageSerial,
+        ) -> Result<Option<StoredVersionRecord>> {
+            self.inner.get_latest(app_id, channel, message_serial).await
+        }
+
+        async fn get_versions(&self, request: VersionStoreReadRequest) -> Result<VersionStorePage> {
+            self.inner.get_versions(request).await
+        }
+
+        async fn replay_after(
+            &self,
+            request: VersionReplayRequest,
+        ) -> Result<Vec<StoredVersionRecord>> {
+            self.inner.replay_after(request).await
+        }
+
+        async fn latest_by_history(
+            &self,
+            app_id: &str,
+            channel: &str,
+        ) -> Result<Vec<StoredVersionRecord>> {
+            self.inner.latest_by_history(app_id, channel).await
+        }
+
+        async fn stream_state(&self, app_id: &str, channel: &str) -> Result<VersionStreamState> {
+            self.inner.stream_state(app_id, channel).await
         }
     }
 
@@ -743,6 +1188,63 @@ mod tests {
         assert_eq!(first.stream_id, second.stream_id);
         assert_eq!(first.delivery_serial, 1);
         assert_eq!(second.delivery_serial, 2);
+    }
+
+    #[tokio::test]
+    async fn leased_store_reserves_gapless_serials_with_amortized_backend_calls() {
+        let inner = Arc::new(CountingBlockVersionStore::new());
+        let store = Arc::new(LeasedVersionStore::new(inner.clone(), 128));
+        let handles = (0..1_000)
+            .map(|_| {
+                let store = store.clone();
+                tokio::spawn(async move {
+                    store
+                        .reserve_delivery_position("app", "chat")
+                        .await
+                        .unwrap()
+                        .delivery_serial
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut serials = Vec::with_capacity(handles.len());
+        for handle in handles {
+            serials.push(handle.await.unwrap());
+        }
+        serials.sort_unstable();
+
+        assert_eq!(serials.len(), 1_000);
+        for (index, serial) in serials.into_iter().enumerate() {
+            assert_eq!(serial, index as u64 + 1);
+        }
+        assert_eq!(inner.single_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(inner.block_calls.load(Ordering::Relaxed), 8);
+    }
+
+    #[tokio::test]
+    async fn leased_store_discards_stale_local_range_when_reserving_after_latest() {
+        let inner = Arc::new(CountingBlockVersionStore::new());
+        let node_a = LeasedVersionStore::new(inner.clone(), 128);
+        let node_b = LeasedVersionStore::new(inner.clone(), 128);
+
+        let first = node_a
+            .reserve_delivery_position("app", "chat")
+            .await
+            .unwrap();
+        let advanced = node_b
+            .reserve_delivery_position_after("app", "chat", first.delivery_serial)
+            .await
+            .unwrap();
+        let after_advanced = node_a
+            .reserve_delivery_position_after("app", "chat", advanced.delivery_serial)
+            .await
+            .unwrap();
+
+        assert_eq!(first.delivery_serial, 1);
+        assert_eq!(advanced.delivery_serial, 129);
+        assert!(after_advanced.delivery_serial > advanced.delivery_serial);
+        assert_eq!(inner.single_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(inner.block_calls.load(Ordering::Relaxed), 3);
     }
 
     #[tokio::test]

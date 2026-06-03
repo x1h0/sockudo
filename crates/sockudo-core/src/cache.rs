@@ -29,6 +29,15 @@ pub trait CacheManager: Send + Sync {
 
     async fn ttl(&self, key: &str) -> Result<Option<Duration>>;
 
+    /// Return up to `limit` unprefixed cache entries whose key starts with `prefix`.
+    ///
+    /// Implementations must bound the returned set by `limit`; callers use this
+    /// for low-frequency janitor work, not publish fan-out.
+    async fn scan_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<(String, String)>> {
+        let _ = (prefix, limit);
+        Ok(Vec::new())
+    }
+
     /// Atomically set a key only if it does not already exist. Returns `true`
     /// if the key was set (i.e., it did not exist), `false` otherwise.
     /// Default implementation falls back to non-atomic has+set.

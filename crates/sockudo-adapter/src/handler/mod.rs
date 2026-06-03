@@ -1,4 +1,6 @@
 // src/adapter/handler/mod.rs
+#[cfg(feature = "ai-transport")]
+pub mod ai_orphans;
 pub mod annotations;
 pub mod auth_tokens;
 pub mod authentication;
@@ -222,7 +224,7 @@ impl ConnectionHandlerBuilder {
             );
         }
 
-        ConnectionHandler {
+        let handler = ConnectionHandler {
             app_manager: self.app_manager,
             connection_manager: self.connection_manager,
             local_adapter: self.local_adapter,
@@ -257,7 +259,22 @@ impl ConnectionHandlerBuilder {
             presence_manager: Arc::new(PresenceManager::new()),
             #[cfg(feature = "recovery")]
             replay_buffer,
+        };
+
+        #[cfg(feature = "ai-transport")]
+        if handler.server_options.ai_transport.enabled {
+            start_ai_stream_orphan_worker(
+                handler.clone(),
+                handler
+                    .server_options
+                    .ai_transport
+                    .rollup
+                    .wheel_tick_ms
+                    .max(1_000),
+            );
         }
+
+        handler
     }
 }
 
@@ -312,6 +329,23 @@ fn start_ai_rollup_worker(
                         "failed to flush AI append rollup delivery"
                     );
                 }
+            }
+        }
+    });
+}
+
+#[cfg(feature = "ai-transport")]
+fn start_ai_stream_orphan_worker(handler: ConnectionHandler, wheel_tick_ms: u64) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    handle.spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(wheel_tick_ms));
+        loop {
+            interval.tick().await;
+            let now_ms = sockudo_core::history::now_ms();
+            if let Err(error) = handler.sweep_ai_stream_orphans_once(now_ms).await {
+                warn!(error = %error, "failed to sweep AI stream orphan registry");
             }
         }
     });

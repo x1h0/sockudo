@@ -1612,7 +1612,7 @@ async fn refresh_history_state_metrics(
 use sockudo_core::version_store::{
     StoredVersionRecord, VersionReplayRequest, VersionStore, VersionStoreCursor,
     VersionStoreDirection, VersionStorePage, VersionStoreReadRequest, VersionStreamState,
-    VersionWriteReservation,
+    VersionWriteReservation, VersionWriteReservationBlock,
 };
 
 // LWT result types for version_streams table.
@@ -1843,12 +1843,35 @@ impl VersionStore for ScyllaVersionStore {
         app_id: &str,
         channel: &str,
     ) -> Result<VersionWriteReservation> {
+        let block = self.reserve_delivery_positions(app_id, channel, 1).await?;
+        Ok(VersionWriteReservation {
+            stream_id: block.stream_id,
+            delivery_serial: block.start_delivery_serial,
+        })
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        if block_size == 0 {
+            return Err(Error::InvalidMessageFormat(
+                "version delivery reservation block size must be greater than 0".to_string(),
+            ));
+        }
+        let block_size_i64 = i64::try_from(block_size).map_err(|_| {
+            Error::InvalidMessageFormat(
+                "version delivery reservation block size is too large".to_string(),
+            )
+        })?;
         let select_q = format!(
             "SELECT next_delivery_serial FROM {} WHERE app_id = ? AND channel = ?",
             self.tables.version_streams_fq()
         );
         let insert_q = format!(
-            "INSERT INTO {} (app_id, channel, next_delivery_serial, migration_state, updated_at_ms) VALUES (?, ?, 2, 'native_only', ?) IF NOT EXISTS",
+            "INSERT INTO {} (app_id, channel, next_delivery_serial, migration_state, updated_at_ms) VALUES (?, ?, ?, 'native_only', ?) IF NOT EXISTS",
             self.tables.version_streams_fq()
         );
         let update_q = format!(
@@ -1881,7 +1904,7 @@ impl VersionStore for ScyllaVersionStore {
                     .query_unpaged(
                         stmt,
                         (
-                            (current + 1) as i64,
+                            (current as i64).saturating_add(block_size_i64),
                             now_ms,
                             app_id,
                             channel,
@@ -1891,9 +1914,10 @@ impl VersionStore for ScyllaVersionStore {
                     .await
                     .map_err(|e| map_scylla_lwt_error("advance version delivery serial", e))?;
                 if version_lwt_applied(result)? {
-                    return Ok(VersionWriteReservation {
+                    return Ok(VersionWriteReservationBlock {
                         stream_id: format!("{}/{}", app_id, channel),
-                        delivery_serial: current,
+                        start_delivery_serial: current,
+                        len: block_size,
                     });
                 }
                 continue;
@@ -1904,13 +1928,17 @@ impl VersionStore for ScyllaVersionStore {
             stmt.set_serial_consistency(Some(SerialConsistency::LocalSerial));
             let result = self
                 .session
-                .query_unpaged(stmt, (app_id, channel, now_ms))
+                .query_unpaged(
+                    stmt,
+                    (app_id, channel, block_size_i64.saturating_add(1), now_ms),
+                )
                 .await
                 .map_err(|e| map_scylla_lwt_error("create version stream row", e))?;
             if version_lwt_applied(result)? {
-                return Ok(VersionWriteReservation {
+                return Ok(VersionWriteReservationBlock {
                     stream_id: format!("{}/{}", app_id, channel),
-                    delivery_serial: 1,
+                    start_delivery_serial: 1,
+                    len: block_size,
                 });
             }
         }

@@ -88,6 +88,31 @@ impl CacheManager for MemoryCacheManager {
         }
     }
 
+    async fn scan_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<(String, String)>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = Vec::with_capacity(limit.min(64));
+        let cache_prefix = format!("{}:", self.prefix);
+        let prefix_len = cache_prefix.len();
+
+        for (key, value) in self.cache.iter() {
+            if entries.len() >= limit {
+                break;
+            }
+            if !key.starts_with(&cache_prefix) {
+                continue;
+            }
+            let unprefixed_key = &key[prefix_len..];
+            if unprefixed_key.starts_with(prefix) {
+                entries.push((unprefixed_key.to_string(), value.clone()));
+            }
+        }
+
+        Ok(entries)
+    }
+
     async fn set_if_not_exists(&self, key: &str, value: &str, _ttl_seconds: u64) -> Result<bool> {
         let prefixed_key = self.prefixed_key(key);
         // Moka's `contains_key` + `insert` isn't truly atomic, but for in-memory

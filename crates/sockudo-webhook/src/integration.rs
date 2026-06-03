@@ -460,6 +460,30 @@ impl WebhookIntegration {
         self.add_webhook("webhooks", job_data).await
     }
 
+    pub async fn send_ai_stream_cancelled(
+        &self,
+        app: &App,
+        channel: &str,
+        message_serial: &str,
+        reason: &str,
+    ) -> Result<()> {
+        if !self.should_send_webhook(app, "ai_stream_cancelled").await {
+            return Ok(());
+        }
+        let event_obj = json!({
+            "name": "ai_stream_cancelled",
+            "channel": channel,
+            "message_serial": message_serial,
+            "reason": reason,
+        });
+        let signature = format!(
+            "{}:{}:{}:ai_stream_cancelled",
+            app.id, channel, message_serial
+        );
+        let job_data = self.create_job_data(app, vec![event_obj], &signature);
+        self.add_webhook("webhooks", job_data).await
+    }
+
     /// Sends a webhook when the subscription count for a channel changes.
     pub async fn send_subscription_count_changed(
         &self,
@@ -501,7 +525,7 @@ mod tests {
     use super::*;
     use sockudo_app::memory_app_manager::MemoryAppManager;
     use sockudo_core::app::{AppFeaturesPolicy, AppLimitsPolicy, AppPolicy};
-    use sockudo_core::webhook_types::{JobData, JobPayload};
+    use sockudo_core::webhook_types::{JobData, JobPayload, Webhook};
     use sockudo_queue::manager::QueueManagerFactory;
 
     async fn create_test_queue_manager() -> Arc<QueueManager> {
@@ -545,6 +569,28 @@ mod tests {
             .unwrap();
 
         let result = integration.send_cache_missed(&app, "test_channel").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_ai_stream_cancelled() {
+        let mut app = test_app();
+        app.policy.webhooks = Some(vec![Webhook {
+            event_types: vec!["ai_stream_cancelled".to_string()],
+            ..Webhook::default()
+        }]);
+        let app_manager = Arc::new(MemoryAppManager::new());
+        let config = WebhookConfig {
+            ..Default::default()
+        };
+        let queue_manager = create_test_queue_manager().await;
+        let integration = WebhookIntegration::new(config, app_manager, Some(queue_manager))
+            .await
+            .unwrap();
+
+        let result = integration
+            .send_ai_stream_cancelled(&app, "ai-chat", "msg-1", "orphan_timeout")
+            .await;
         assert!(result.is_ok());
     }
 

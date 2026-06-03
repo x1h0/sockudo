@@ -482,7 +482,10 @@ impl ConnectionHandler {
                             message.extras.clone(),
                         ),
                     };
-                    self.version_store().append_version(record).await?;
+                    self.version_store().append_version(record.clone()).await?;
+                    #[cfg(feature = "ai-transport")]
+                    self.record_ai_stream_activity(&app_config.id, channel, &record)
+                        .await?;
                     publish_ack = Some(PublishAck {
                         message_serial: message_serial_value.clone(),
                         history_serial,

@@ -13,7 +13,7 @@ use sockudo_core::options::{HistoryConfig, SurrealDbSettings};
 use sockudo_core::version_store::{
     StoredVersionRecord, VersionReplayRequest, VersionStore, VersionStoreCursor,
     VersionStoreDirection, VersionStorePage, VersionStoreReadRequest, VersionStreamState,
-    VersionWriteReservation,
+    VersionWriteReservation, VersionWriteReservationBlock,
 };
 use sockudo_core::versioned_messages::MessageSerial;
 use sonic_rs::JsonValueTrait;
@@ -1573,6 +1573,29 @@ impl VersionStore for SurrealVersionStore {
         app_id: &str,
         channel: &str,
     ) -> Result<VersionWriteReservation> {
+        let block = self.reserve_delivery_positions(app_id, channel, 1).await?;
+        Ok(VersionWriteReservation {
+            stream_id: block.stream_id,
+            delivery_serial: block.start_delivery_serial,
+        })
+    }
+
+    async fn reserve_delivery_positions(
+        &self,
+        app_id: &str,
+        channel: &str,
+        block_size: u64,
+    ) -> Result<VersionWriteReservationBlock> {
+        if block_size == 0 {
+            return Err(Error::InvalidMessageFormat(
+                "version delivery reservation block size must be greater than 0".to_string(),
+            ));
+        }
+        let block_size_i64 = i64::try_from(block_size).map_err(|_| {
+            Error::InvalidMessageFormat(
+                "version delivery reservation block size is too large".to_string(),
+            )
+        })?;
         let record_id = deterministic_key([app_id, channel].into_iter());
         let stream_id = format!("{app_id}/{channel}");
         loop {
@@ -1591,7 +1614,7 @@ impl VersionStore for SurrealVersionStore {
                     .query("UPDATE ONLY type::record($table, $id) SET next_delivery_serial = $next, updated_at_ms = $now WHERE next_delivery_serial = $expected RETURN AFTER")
                     .bind(("table", self.tables.streams.clone()))
                     .bind(("id", record_id.clone()))
-                    .bind(("next", existing.next_delivery_serial + 1))
+                    .bind(("next", existing.next_delivery_serial + block_size_i64))
                     .bind(("now", now_ms))
                     .bind(("expected", existing.next_delivery_serial))
                     .await
@@ -1603,9 +1626,10 @@ impl VersionStore for SurrealVersionStore {
                         ))
                     })?;
                 if updated.is_some() {
-                    return Ok(VersionWriteReservation {
+                    return Ok(VersionWriteReservationBlock {
                         stream_id: existing.stream_id,
-                        delivery_serial: existing.next_delivery_serial as u64,
+                        start_delivery_serial: existing.next_delivery_serial as u64,
+                        len: block_size,
                     });
                 }
                 continue;
@@ -1616,7 +1640,7 @@ impl VersionStore for SurrealVersionStore {
                 app_id: app_id.to_string(),
                 channel: channel.to_string(),
                 stream_id: stream_id.clone(),
-                next_delivery_serial: 2,
+                next_delivery_serial: block_size_i64.saturating_add(1),
                 oldest_delivery_serial: None,
                 newest_delivery_serial: None,
                 updated_at_ms: now_ms,
@@ -1631,9 +1655,10 @@ impl VersionStore for SurrealVersionStore {
                 });
             match create_result {
                 Ok(Some(_)) | Ok(None) => {
-                    return Ok(VersionWriteReservation {
+                    return Ok(VersionWriteReservationBlock {
                         stream_id,
-                        delivery_serial: 1,
+                        start_delivery_serial: 1,
+                        len: block_size,
                     });
                 }
                 Err(err) => {

@@ -1216,6 +1216,45 @@ impl AiTransportConfig {
                 .iter()
                 .any(|entry| entry.matches_channel(channel))
     }
+
+    fn validate_deployment_matrix(
+        &self,
+        adapter: &AdapterConfig,
+        cache: &CacheConfig,
+        history: &HistoryConfig,
+        versioned_messages: &VersionedMessagesConfig,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if !history.enabled {
+            return Err("ai_transport.enabled requires history.enabled".to_string());
+        }
+        if !versioned_messages.enabled {
+            return Err("ai_transport.enabled requires versioned_messages.enabled".to_string());
+        }
+
+        if adapter.driver != AdapterDriver::Local {
+            if history.backend == HistoryBackend::Memory {
+                return Err(
+                    "ai_transport horizontal deployments require a shared history backend; memory history is local-only".to_string(),
+                );
+            }
+            if versioned_messages.driver == VersionStoreDriver::Memory {
+                return Err(
+                    "ai_transport horizontal deployments require a shared version_store driver; memory version store is local-only".to_string(),
+                );
+            }
+            if matches!(cache.driver, CacheDriver::Memory | CacheDriver::None) {
+                return Err(
+                    "ai_transport horizontal deployments require a shared cache driver for orphan ownership; memory/none cache is local-only".to_string(),
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for AiTransportConfig {
@@ -1250,7 +1289,7 @@ impl Default for AiTransportRollupConfig {
             default_window_ms: 40,
             min_window_ms: 0,
             max_window_ms: 500,
-            orphan_ttl_ms: 1_000,
+            orphan_ttl_ms: 60_000,
             wheel_tick_ms: 5,
             shards: 64,
         }
@@ -2689,8 +2728,8 @@ impl Default for DeltaCompressionOptionsConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeltaCoordinationBackend, PushQueueDriver, PushStorageDriver, QueueDriver, ServerOptions,
-        VersionStoreDriver,
+        AdapterDriver, CacheDriver, DeltaCoordinationBackend, HistoryBackend, PushQueueDriver,
+        PushStorageDriver, QueueDriver, ServerOptions, VersionStoreDriver,
     };
     use crate::app::{App, AppPolicy};
     use std::str::FromStr;
@@ -2756,6 +2795,20 @@ mod tests {
         )
     }
 
+    fn ai_transport_options() -> ServerOptions {
+        let mut options = ServerOptions::default();
+        options.ai_transport.enabled = true;
+        options
+            .ai_transport
+            .channels
+            .push(super::AiTransportChannelConfig {
+                prefix: "private-ai-".to_string(),
+            });
+        options.history.enabled = true;
+        options.versioned_messages.enabled = true;
+        options
+    }
+
     #[test]
     fn queue_driver_parses_broker_backends() {
         assert_eq!(
@@ -2786,6 +2839,49 @@ mod tests {
         assert_eq!(
             DeltaCoordinationBackend::from_str("nats").unwrap(),
             DeltaCoordinationBackend::Nats
+        );
+    }
+
+    #[test]
+    fn ai_transport_allows_single_node_memory_development_matrix() {
+        let mut options = ai_transport_options();
+        options.adapter.driver = AdapterDriver::Local;
+        options.history.backend = HistoryBackend::Memory;
+        options.versioned_messages.driver = VersionStoreDriver::Memory;
+
+        assert!(options.validate().is_ok());
+    }
+
+    #[test]
+    fn ai_transport_rejects_horizontal_memory_state_matrix() {
+        let mut options = ai_transport_options();
+        options.adapter.driver = AdapterDriver::Redis;
+        options.history.backend = HistoryBackend::Memory;
+        options.versioned_messages.driver = VersionStoreDriver::Postgres;
+        options.cache.driver = CacheDriver::Redis;
+
+        let error = options.validate().unwrap_err();
+        assert!(
+            error.contains("shared history backend"),
+            "unexpected error: {error}"
+        );
+
+        options.history.backend = HistoryBackend::Postgres;
+        options.versioned_messages.driver = VersionStoreDriver::Memory;
+
+        let error = options.validate().unwrap_err();
+        assert!(
+            error.contains("shared version_store driver"),
+            "unexpected error: {error}"
+        );
+
+        options.versioned_messages.driver = VersionStoreDriver::Postgres;
+        options.cache.driver = CacheDriver::Memory;
+
+        let error = options.validate().unwrap_err();
+        assert!(
+            error.contains("shared cache driver"),
+            "unexpected error: {error}"
         );
     }
 
@@ -4340,6 +4436,12 @@ impl ServerOptions {
             return Err("annotations require versioned_messages.enabled".to_string());
         }
         if self.ai_transport.enabled {
+            self.ai_transport.validate_deployment_matrix(
+                &self.adapter,
+                &self.cache,
+                &self.history,
+                &self.versioned_messages,
+            )?;
             if self.ai_transport.max_accumulated_message_bytes == 0 {
                 return Err(
                     "ai_transport.max_accumulated_message_bytes must be greater than 0".to_string(),

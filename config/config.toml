@@ -356,7 +356,7 @@ enabled = true
 default_window_ms = 40
 min_window_ms = 0
 max_window_ms = 500
-orphan_ttl_ms = 1000
+orphan_ttl_ms = 60000
 wheel_tick_ms = 5
 shards = 64
 
