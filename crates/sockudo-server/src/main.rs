@@ -34,7 +34,6 @@ use clap::Parser;
 use futures_util::future::join_all;
 #[cfg(all(feature = "push", feature = "monolith", feature = "push-apns"))]
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use mimalloc::MiMalloc;
 use sockudo_core::error::Error;
 #[cfg(all(feature = "push", feature = "monolith"))]
 use std::env;
@@ -4016,8 +4015,10 @@ mod tests {
     }
 }
 
+// jemalloc is the default allocator, Windows MSVC falls back to the system allocator
+#[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
