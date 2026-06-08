@@ -216,7 +216,14 @@ impl ConnectionHandler {
             return Ok(raw_message);
         };
 
-        Ok(self.build_runtime_message_from_record(&latest, raw_message.stream_id.clone()))
+        let stream_id = self
+            .version_store()
+            .stream_state(&app_config.id, channel)
+            .await?
+            .stream_id
+            .or_else(|| raw_message.stream_id.clone());
+
+        Ok(self.build_runtime_message_from_record(&latest, stream_id))
     }
 
     async fn history_item_response(
