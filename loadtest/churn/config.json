@@ -20,7 +20,8 @@
       "heartbeat_interval_ms": 2000,
       "node_timeout_ms": 10000,
       "cleanup_interval_ms": 2000
-    }
+    },
+    "aggregate_counts": true
   },
   "cache": { "driver": "memory", "memory": { "ttl": 300, "cleanup_interval": 60, "max_capacity": 100000 } },
   "queue": { "driver": "memory" },

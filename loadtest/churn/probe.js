@@ -25,6 +25,7 @@ const probeLat = new Trend('probe_latency', true);
 const probeRecv = new Counter('probe_recv');
 const pubOk = new Counter('pub_ok');
 const pubFail = new Counter('pub_fail');
+const reportedCount = new Trend('reported_count'); // subscription_count returned by the API
 
 export const options = {
   scenarios: {
@@ -46,7 +47,17 @@ export function publisher() {
   const sig = crypto.hmac('sha256', SECRET, toSign, 'hex');
   const url = 'http://' + PUB_HOST + '/apps/' + APP_ID + '/events?' + qs + '&auth_signature=' + sig;
   const res = http.post(url, body, { headers: { 'Content-Type': 'application/json' } });
-  if (res.status === 200) pubOk.add(1); else pubFail.add(1);
+  if (res.status === 200) {
+    pubOk.add(1);
+    if (INFO) {
+      try {
+        const c = JSON.parse(res.body).channels[CHANNEL].subscription_count;
+        if (typeof c === 'number') reportedCount.add(c);
+      } catch (e) { /* ignore */ }
+    }
+  } else {
+    pubFail.add(1);
+  }
   sleep(PUB_INTERVAL_MS / 1000);
 }
 
