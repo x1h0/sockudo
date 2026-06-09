@@ -21,11 +21,6 @@ services:
 
   sockudo1:
     image: ${SOCKUDO_IMAGE:-sockudo:churn-test}
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1g
     volumes: ["./config.json:/app/config/config.json:ro"]
     environment: { RUST_LOG: "warn,sockudo_adapter::horizontal_adapter_base=warn" }
     ports: ["6011:6001", "9611:9601"]
@@ -34,11 +29,6 @@ services:
 
   sockudo2:
     image: ${SOCKUDO_IMAGE:-sockudo:churn-test}
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1g
     volumes: ["./config.json:/app/config/config.json:ro"]
     environment: { RUST_LOG: "warn,sockudo_adapter::horizontal_adapter_base=warn" }
     ports: ["6012:6001", "9612:9601"]
@@ -47,11 +37,6 @@ services:
 
   sockudo3:
     image: ${SOCKUDO_IMAGE:-sockudo:churn-test}
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1g
     volumes: ["./config.json:/app/config/config.json:ro"]
     environment: { RUST_LOG: "warn,sockudo_adapter::horizontal_adapter_base=warn" }
     ports: ["6013:6001", "9613:9601"]
