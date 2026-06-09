@@ -1282,8 +1282,9 @@ where
             .get_channel_members(app_id, channel)
             .await?;
 
-        {
+        let collected: Vec<(String, Option<sonic_rs::Value>)> = {
             let registry = self.horizontal.cluster_presence_registry.read().await;
+            let mut collected = Vec::new();
             for (node_id, node_data) in registry.iter() {
                 if node_id == &self.node_id {
                     continue;
@@ -1293,15 +1294,17 @@ where
                         if entry.app_id != app_id {
                             continue;
                         }
-                        members.entry(entry.user_id.clone()).or_insert_with(|| {
-                            PresenceMemberInfo {
-                                user_id: entry.user_id.clone(),
-                                user_info: entry.user_info.clone(),
-                            }
-                        });
+                        collected.push((entry.user_id.clone(), entry.user_info.clone()));
                     }
                 }
             }
+            collected
+        };
+
+        for (user_id, user_info) in collected {
+            members
+                .entry(user_id.clone())
+                .or_insert_with(|| PresenceMemberInfo { user_id, user_info });
         }
 
         Ok(members)

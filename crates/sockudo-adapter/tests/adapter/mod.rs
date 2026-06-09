@@ -75,3 +75,6 @@ mod filter_index_disconnect_cleanup_tests;
 
 #[cfg(test)]
 mod replay_buffer_tests;
+
+#[cfg(test)]
+mod cluster_presence_registry_tests;
