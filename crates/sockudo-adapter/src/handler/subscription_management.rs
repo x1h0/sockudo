@@ -610,7 +610,6 @@ impl ConnectionHandler {
 
             let mut conn_locked = conn_arc.inner.lock().await;
 
-            // Handle presence data
             if let Some(ref member) = subscription_result.member {
                 conn_locked.state.user_id = Some(member.user_id.clone());
 
@@ -619,15 +618,21 @@ impl ConnectionHandler {
                     user_info: Some(member.user_info.clone()),
                 };
 
-                conn_locked.add_presence_info(request.channel.clone(), presence_info);
-
-                // Release the connection lock before calling add_user
+                conn_locked.add_presence_info(request.channel.clone(), presence_info.clone());
                 drop(conn_locked);
 
-                // Add user to the user-socket mapping so get_user_sockets() can find it
+                if let Some(ref local_adapter) = self.local_adapter
+                    && let Some(namespace) = local_adapter.namespaces.get(&app_config.id)
+                {
+                    namespace
+                        .presence_data
+                        .entry(*socket_id)
+                        .or_default()
+                        .insert(request.channel.clone(), presence_info);
+                }
+
                 self.connection_manager.add_user(conn_arc.clone()).await?;
             } else {
-                // Release locks when not needed
                 drop(conn_locked);
             }
         }

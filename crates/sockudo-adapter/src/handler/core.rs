@@ -840,9 +840,16 @@ impl ConnectionHandler {
             let mut conn_locked = conn_arc.inner.lock().await;
             conn_locked.unsubscribe_from_channel(channel_name);
 
-            // Remove presence info if it's a presence channel
             if channel_name.starts_with("presence-") {
                 conn_locked.remove_presence_info(channel_name);
+                drop(conn_locked);
+
+                if let Some(ref local_adapter) = self.local_adapter
+                    && let Some(namespace) = local_adapter.namespaces.get(&app_config.id)
+                    && let Some(mut per_socket) = namespace.presence_data.get_mut(socket_id)
+                {
+                    per_socket.remove(channel_name);
+                }
             }
         }
         Ok(())

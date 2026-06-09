@@ -1717,7 +1717,7 @@ impl ConnectionManager for LocalAdapter {
         channel: &str,
     ) -> Result<HashMap<String, PresenceMemberInfo>> {
         match self.existing_namespace(app_id) {
-            Some(namespace) => namespace.get_channel_members(channel).await,
+            Some(namespace) => namespace.get_channel_members(channel),
             None => Ok(HashMap::new()),
         }
     }
@@ -1867,7 +1867,7 @@ impl ConnectionManager for LocalAdapter {
         socket_id: &SocketId,
     ) -> Option<PresenceMemberInfo> {
         let namespace = self.get_or_create_namespace(app_id).await;
-        namespace.get_presence_member(channel, socket_id).await
+        namespace.get_presence_member(channel, socket_id)
     }
 
     async fn terminate_user_connections(&self, app_id: &str, user_id: &str) -> Result<()> {
@@ -1923,9 +1923,7 @@ impl ConnectionManager for LocalAdapter {
     ) -> Result<usize> {
         match self.existing_namespace(app_id) {
             Some(namespace) => {
-                namespace
-                    .count_user_connections_in_channel(user_id, channel, excluding_socket)
-                    .await
+                namespace.count_user_connections_in_channel(user_id, channel, excluding_socket)
             }
             None => Ok(0),
         }
