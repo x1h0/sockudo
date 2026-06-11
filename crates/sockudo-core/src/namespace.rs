@@ -9,7 +9,7 @@ use dashmap::{DashMap, DashSet};
 use futures_util::future::join_all;
 use sockudo_ws::axum_integration::WebSocketWriter;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 // Represents a namespace, typically tied to a specific application ID.
 pub struct Namespace {
@@ -113,7 +113,7 @@ impl Namespace {
                 }
             }
         } else {
-            info!(
+            debug!(
                 "get_channel_members called on non-existent channel: {}",
                 channel
             );
