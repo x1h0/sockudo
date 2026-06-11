@@ -100,7 +100,7 @@ hyper-util = "^0.1.17"
 libc = "0.2"
 md5 = "0.8.0"
 memchr = "2.7"
-mimalloc = { version = "0.1.48", features = ["v3"] }
+tikv-jemallocator = "0.7"
 mockall = "0.13.1"
 moka = { version = "0.12.11", features = ["future", "sync"] }
 lapin = { version = "4.3.0", default-features = false, features = ["rustls", "tokio"] }

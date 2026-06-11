@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use redis::{AsyncCommands, Client};
 use sockudo_core::error::{Error, Result};
 use sockudo_core::rate_limiter::{RateLimitConfig, RateLimitResult, RateLimiter};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Redis-based rate limiter implementation
 pub struct RedisRateLimiter {
@@ -81,14 +80,6 @@ impl RedisRateLimiter {
         format!("{}:rl:{}", self.prefix, key)
     }
 
-    /// Get the Unix timestamp for the current time
-    fn get_current_time() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| Duration::from_secs(0))
-            .as_secs()
-    }
-
     /// Run sliding window rate limiting using Redis
     async fn run_sliding_window_check(
         &self,
@@ -96,13 +87,13 @@ impl RedisRateLimiter {
         increment: bool,
     ) -> Result<RateLimitResult> {
         let redis_key = self.get_key(key);
-        let now = Self::get_current_time();
-        let window_start = now - self.config.window_secs;
+        let now_ms = crate::redis_window::current_time_ms();
+        let window_start_ms = crate::redis_window::window_start_ms(now_ms, self.config.window_secs);
 
         let mut conn = self.connection.clone();
 
-        let _: () = conn
-            .zrevrangebyscore(&redis_key, 0, window_start as i64)
+        let _: usize = conn
+            .zrembyscore(&redis_key, 0, window_start_ms)
             .await
             .map_err(|e| Error::Redis(format!("Failed to clean up Redis sorted set: {e}")))?;
 
@@ -120,8 +111,9 @@ impl RedisRateLimiter {
         let allowed = remaining > 0;
 
         if increment && allowed {
-            let _: () = conn
-                .zadd(&redis_key, now, now)
+            let member = crate::redis_window::entry_member(now_ms);
+            let _: usize = conn
+                .zadd(&redis_key, member, now_ms)
                 .await
                 .map_err(|e| Error::Redis(format!("Failed to increment Redis counter: {e}")))?;
 

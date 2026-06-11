@@ -67,6 +67,10 @@ RUN test -f Cargo.lock || cargo generate-lockfile
 
 ARG SOCKUDO_FEATURES=full
 
+# Set jemalloc's page size to 4KB (use 16 for 64KB-page hosts)
+ARG JEMALLOC_SYS_WITH_LG_PAGE=12
+ENV JEMALLOC_SYS_WITH_LG_PAGE=${JEMALLOC_SYS_WITH_LG_PAGE}
+
 # Build dependencies only (this layer is cached unless Cargo.toml files change)
 RUN cargo build -p sockudo --release --features "${SOCKUDO_FEATURES}" || true
 # Clean up dummy sources but keep compiled deps

@@ -5,6 +5,8 @@ pub mod middleware;
 pub mod redis_cluster_limiter;
 #[cfg(feature = "redis")]
 pub mod redis_limiter;
+#[cfg(any(feature = "redis", feature = "redis-cluster"))]
+mod redis_window;
 
 pub use sockudo_core::rate_limiter::{RateLimitConfig, RateLimitResult, RateLimiter};
 

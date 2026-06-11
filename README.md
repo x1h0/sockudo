@@ -13,6 +13,17 @@
 
 [![Star History Chart](https://api.star-history.com/svg?repos=sockudo/sockudo&type=Date&theme=dark)](https://star-history.com/#sockudo/sockudo&Date)
 
+## Sponsors
+
+<p align="center">
+  <a href="https://swag.live/">
+    <img src="https://swag.live/static/img/favicon.2991446b.png" alt="SWAG" width="96">
+  </a>
+  <a href="https://livecaller.io/">
+    <img src="https://cdn.prod.website-files.com/69159207dbb70153a0260551/69159207dbb70153a02605cc_logo.svg" alt="LiveCaller" width="180">
+  </a>
+</p>
+
 ## Features
 
 - **🚀 High Performance** - Handle 100K+ concurrent connections

@@ -239,7 +239,7 @@ impl LocalAdapter {
 struct SocketMessageParams<'a> {
     socket_ref: WebSocketRef,
     base_message: PusherMessage,
-    base_message_bytes: Vec<u8>,
+    base_message_bytes: Bytes,
     channel: &'a str,
     event_name: &'a str,
     delta_compression: Arc<sockudo_delta::DeltaCompressionManager>,
@@ -253,7 +253,7 @@ struct SocketMessageParams<'a> {
 struct PrecomputedDeltaParams<'a> {
     socket_ref: WebSocketRef,
     base_message: PusherMessage,
-    base_message_bytes: Vec<u8>,
+    base_message_bytes: Bytes,
     channel: &'a str,
     event_name: &'a str,
     delta_compression: Arc<sockudo_delta::DeltaCompressionManager>,
@@ -379,7 +379,7 @@ impl LocalAdapter {
         &self,
         target_socket_refs: Vec<WebSocketRef>,
         base_message: PusherMessage,
-        base_message_bytes: Vec<u8>,
+        base_message_bytes: Bytes,
         channel: &str,
         event_name: &str,
         compression: crate::connection_manager::CompressionParams<'_>,
@@ -822,7 +822,7 @@ impl LocalAdapter {
                         result.push_str(&format!(",\"__conflation_key\":\"{}\"", conflation_key));
                     }
                     result.push('}');
-                    result.into_bytes()
+                    Bytes::from(result.into_bytes())
                 } else {
                     base_message_bytes.clone()
                 }
@@ -862,7 +862,7 @@ impl LocalAdapter {
                         socket_id,
                         channel,
                         event_name,
-                        base_message_bytes.clone(),
+                        base_message_bytes.to_vec(),
                         true,
                         channel_settings,
                     )
@@ -948,7 +948,7 @@ impl LocalAdapter {
                         socket_id,
                         channel,
                         event_name,
-                        base_message_bytes.clone(),
+                        base_message_bytes.to_vec(),
                         false,
                         channel_settings,
                     )
@@ -1112,7 +1112,7 @@ impl LocalAdapter {
                     socket_id,
                     channel,
                     event_name,
-                    base_message_bytes.clone(),
+                    base_message_bytes.to_vec(),
                     false,
                     channel_settings,
                 )
@@ -1149,7 +1149,7 @@ impl LocalAdapter {
                         result.push_str(&format!(",\"__conflation_key\":\"{}\"", conflation_key));
                     }
                     result.push('}');
-                    result.into_bytes()
+                    Bytes::from(result.into_bytes())
                 } else {
                     base_message_bytes.clone()
                 }
@@ -1168,7 +1168,7 @@ impl LocalAdapter {
                     socket_id,
                     channel,
                     event_name,
-                    base_message_bytes.clone(),
+                    base_message_bytes.to_vec(),
                     true,
                     channel_settings,
                 )
@@ -1651,11 +1651,21 @@ impl ConnectionManager for LocalAdapter {
 
         // Send to filtered V2 sockets (Sockudo-native: sockudo: prefix, serial + message_id)
         if !filtered_socket_refs.is_empty() {
-            let (v2_message, _v2_bytes) = crate::v2_broadcast::prepare_v2_message(message)?;
+            let (v2_message, v2_bytes) = crate::v2_broadcast::prepare_v2_message(message)?;
+            let (json_socket_refs, binary_socket_refs): (Vec<_>, Vec<_>) = filtered_socket_refs
+                .into_iter()
+                .partition(|socket| socket.wire_format == sockudo_protocol::WireFormat::Json);
+
             Self::log_send_errors(
-                self.send_protocol_messages_concurrent(filtered_socket_refs, v2_message)
+                self.send_messages_concurrent(json_socket_refs, v2_bytes)
                     .await,
             );
+            if !binary_socket_refs.is_empty() {
+                Self::log_send_errors(
+                    self.send_protocol_messages_concurrent(binary_socket_refs, v2_message)
+                        .await,
+                );
+            }
         }
 
         Ok(())
@@ -1734,8 +1744,10 @@ impl ConnectionManager for LocalAdapter {
             v2_message.rewrite_prefix(sockudo_protocol::ProtocolVersion::V2);
             v2_message.idempotency_key = None;
             let v2_event_name = v2_message.event.as_deref().unwrap_or("").to_string();
-            let v2_bytes = sonic_rs::to_vec(&v2_message)
-                .map_err(|e| Error::InvalidMessageFormat(format!("Serialization failed: {e}")))?;
+            let v2_bytes =
+                Bytes::from(sonic_rs::to_vec(&v2_message).map_err(|e| {
+                    Error::InvalidMessageFormat(format!("Serialization failed: {e}"))
+                })?);
             Self::log_send_errors(
                 self.send_messages_with_compression(
                     filtered_socket_refs,
@@ -1904,15 +1916,15 @@ impl ConnectionManager for LocalAdapter {
     ) -> Result<bool> {
         let namespace = self.get_or_create_namespace(app_id).await;
 
-        // MEMORY LEAK FIX: Clean up filter index BEFORE removing from channel
-        // Get the socket's filter for this channel so we can remove it from the index
+        // Clean the filter index unconditionally. On disconnect the socket is
+        // already gone from the namespace and its filter can no longer be read.
         #[cfg(feature = "tag-filtering")]
-        if let Some(socket_ref) = namespace.sockets.get(socket_id) {
-            let filter_node = socket_ref.get_channel_filter_sync(channel);
+        {
             self.filter_index
-                .remove_socket_filter(channel, *socket_id, filter_node.as_deref());
-            // Also remove from the socket's channel_filters map
-            socket_ref.channel_filters.remove(channel);
+                .remove_socket_all_filters(channel, *socket_id);
+            if let Some(socket_ref) = namespace.sockets.get(socket_id) {
+                socket_ref.channel_filters.remove(channel);
+            }
         }
 
         Ok(namespace.remove_channel_from_socket(channel, socket_id))
