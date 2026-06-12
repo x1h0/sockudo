@@ -826,7 +826,7 @@ where
                     break;
                 }
                 tick = tick.wrapping_add(1);
-                let full = tick % FULL_SNAPSHOT_EVERY_TICKS == 0;
+                let full = tick.is_multiple_of(FULL_SNAPSHOT_EVERY_TICKS);
 
                 // Only gossip when there are peers to receive it.
                 if horizontal.get_effective_node_count().await <= 1 {
