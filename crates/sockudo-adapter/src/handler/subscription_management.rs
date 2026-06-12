@@ -626,7 +626,6 @@ impl ConnectionHandler {
 
             let mut conn_locked = conn_arc.inner.lock().await;
 
-            // Handle presence data
             if let Some(ref member) = subscription_result.member {
                 conn_locked.state.user_id = Some(member.user_id.clone());
 
@@ -635,15 +634,20 @@ impl ConnectionHandler {
                     user_info: Some(member.user_info.clone()),
                 };
 
-                conn_locked.add_presence_info(request.channel.clone(), presence_info);
-
-                // Release the connection lock before calling add_user
+                conn_locked.add_presence_info(request.channel.clone(), presence_info.clone());
+                // Release the connection lock before the mirror write and add_user
                 drop(conn_locked);
+
+                self.set_namespace_presence(
+                    &app_config.id,
+                    socket_id,
+                    &request.channel,
+                    presence_info,
+                );
 
                 // Add user to the user-socket mapping so get_user_sockets() can find it
                 self.connection_manager.add_user(conn_arc.clone()).await?;
             } else {
-                // Release locks when not needed
                 drop(conn_locked);
             }
         }
@@ -845,7 +849,7 @@ impl ConnectionHandler {
                 delta_sequence: None,
                 delta_conflation_key: None,
             };
-            connection.send_message(&message).await?;
+            connection.send_message(&message)?;
             if let Some(metrics) = self.metrics() {
                 metrics.mark_annotation_summary_delivery(channel);
             }

@@ -74,37 +74,86 @@ impl PresenceManager {
         );
 
         let lock_key = presence_lock_key(&app_config.id, channel, user_id);
-
-        // FIX: Acquire per-user lock to prevent TOCTOU race between checking connection count
-        // and sending member_added events. Without this lock:
-        // - Thread A: checks count=0, about to send member_added
-        // - Thread B: checks count=0, sends member_added (duplicate!)
-        // - Thread A: sends member_added (duplicate!)
-        //
-        // With lock:
-        // - Thread A: acquires lock, checks count=0, sends member_added, releases lock
-        // - Thread B: acquires lock, checks count=1, skips member_added, releases lock
         let presence_lock = self.get_presence_lock(&lock_key);
-        let _lock_guard = presence_lock.lock().await;
 
-        // Check if user already had connections in this presence channel (excluding current socket)
-        // This check is now protected by the lock
-        let had_other_connections = Self::user_has_other_connections_in_presence_channel(
-            Arc::clone(&connection_manager),
-            &app_config.id,
-            channel,
-            user_id,
-            excluding_socket,
-        )
-        .await?;
+        // TOCTOU check AND member_added broadcasts under the per-user lock.
+        // The lock serializes the count check so two concurrent first-joins can't
+        // both see count=0 and emit duplicate member_added events.
+        // The broadcast must stay inside the lock: a concurrent last-leave/first-join
+        // race on the same user emits both member_removed and member_added, and the
+        // wire order must match the decision order or clients end up with an inverted
+        // member list. The lock is keyed per (app, channel, user), so this only
+        // serializes the same user's join/leave on the same channel.
+        // Webhook enqueue and history recording happen AFTER the lock is released.
+        let should_send_event = {
+            let _lock_guard = presence_lock.lock().await;
+            let first_join = !Self::user_has_other_connections_in_presence_channel(
+                Arc::clone(&connection_manager),
+                &app_config.id,
+                channel,
+                user_id,
+                excluding_socket,
+            )
+            .await?;
 
-        if !had_other_connections {
-            debug!(
-                "User {} is joining channel {} for the first time, sending member_added events",
-                user_id, channel
-            );
+            if first_join {
+                debug!(
+                    "User {} is joining channel {} for the first time, sending member_added events",
+                    user_id, channel
+                );
 
-            // Send member_added webhook
+                // Broadcast member_added event to existing clients in the channel
+                let member_added_msg = sockudo_protocol::messages::PusherMessage::member_added(
+                    channel.to_string(),
+                    user_id.to_string(),
+                    user_info.cloned(),
+                );
+                Self::broadcast_to_channel(
+                    Arc::clone(&connection_manager),
+                    &app_config.id,
+                    channel,
+                    member_added_msg,
+                    excluding_socket,
+                )
+                .await?;
+
+                let _ = Self::broadcast_to_channel(
+                    Arc::clone(&connection_manager),
+                    &app_config.id,
+                    &format!("[meta]{channel}"),
+                    sockudo_protocol::messages::PusherMessage {
+                        event: Some("sockudo_internal:member_added".to_string()),
+                        channel: Some(format!("[meta]{channel}")),
+                        data: Some(sockudo_protocol::messages::MessageData::Json(
+                            sonic_rs::json!({
+                                "channel": channel,
+                                "user_id": user_id,
+                            }),
+                        )),
+                        name: None,
+                        user_id: None,
+                        tags: None,
+                        sequence: None,
+                        conflation_key: None,
+                        message_id: None,
+                        stream_id: None,
+                        serial: None,
+                        idempotency_key: None,
+                        extras: None,
+                        delta_sequence: None,
+                        delta_conflation_key: None,
+                    },
+                    None,
+                )
+                .await;
+            }
+
+            first_join
+        }; // _lock_guard dropped here
+
+        if should_send_event {
+            // Send member_added webhook (queue enqueue, outside the lock —
+            // webhook delivery order is timestamp-based, not enqueue-order-based)
             if let Some(webhook_integration) = webhook_integration
                 && let Err(e) = webhook_integration
                     .send_member_added(app_config, channel, user_id)
@@ -115,51 +164,6 @@ impl PresenceManager {
                     user_id, channel, e
                 );
             }
-
-            // Broadcast member_added event to existing clients in the channel
-            let member_added_msg = sockudo_protocol::messages::PusherMessage::member_added(
-                channel.to_string(),
-                user_id.to_string(),
-                user_info.cloned(),
-            );
-            Self::broadcast_to_channel(
-                Arc::clone(&connection_manager),
-                &app_config.id,
-                channel,
-                member_added_msg,
-                excluding_socket,
-            )
-            .await?;
-
-            let _ = Self::broadcast_to_channel(
-                Arc::clone(&connection_manager),
-                &app_config.id,
-                &format!("[meta]{channel}"),
-                sockudo_protocol::messages::PusherMessage {
-                    event: Some("sockudo_internal:member_added".to_string()),
-                    channel: Some(format!("[meta]{channel}")),
-                    data: Some(sockudo_protocol::messages::MessageData::Json(
-                        sonic_rs::json!({
-                            "channel": channel,
-                            "user_id": user_id,
-                        }),
-                    )),
-                    name: None,
-                    user_id: None,
-                    tags: None,
-                    sequence: None,
-                    conflation_key: None,
-                    message_id: None,
-                    stream_id: None,
-                    serial: None,
-                    idempotency_key: None,
-                    extras: None,
-                    delta_sequence: None,
-                    delta_conflation_key: None,
-                },
-                None,
-            )
-            .await;
 
             debug!(
                 "Successfully processed member_added for user {} in channel {}",
@@ -202,14 +206,10 @@ impl PresenceManager {
             }
         } else {
             debug!(
-                "User {} already has {} connections in channel {}, skipping member_added events",
-                user_id,
-                if had_other_connections { "other" } else { "no" },
-                channel
+                "User {} already has other connections in channel {}, skipping member_added events",
+                user_id, channel
             );
         }
-
-        // Lock is released here when _lock_guard goes out of scope
 
         // Always broadcast presence join to all nodes for cluster replication (for every connection)
         // This is done OUTSIDE the lock to avoid holding it during network I/O
@@ -265,41 +265,81 @@ impl PresenceManager {
         );
 
         let lock_key = presence_lock_key(&app_config.id, channel, user_id);
-
-        // FIX: Acquire per-user lock to prevent TOCTOU race between checking connection count
-        // and sending member_removed events. Without this lock:
-        // - Thread A (disconnect socket 1): checks count=1, about to send member_removed
-        // - Thread B (disconnect socket 2): checks count=1, sends member_removed
-        // - Thread A: sends member_removed (duplicate! user still has socket 2... wait, no they don't)
-        //
-        // The real race is:
-        // - Thread A (disconnect): checks count=1 (only this socket), prepares member_removed
-        // - Thread B (connect): checks count=1 (sees socket being disconnected), skips member_added
-        // - Thread A: sends member_removed
-        // Result: User is connected but appears removed!
-        //
-        // With lock:
-        // - Operations are serialized per user+channel, ensuring consistent state
         let presence_lock = self.get_presence_lock(&lock_key);
-        let _lock_guard = presence_lock.lock().await;
 
-        // Check if user has other connections in this presence channel
-        // This check is now protected by the lock
-        let has_other_connections = Self::user_has_other_connections_in_presence_channel(
-            Arc::clone(connection_manager),
-            &app_config.id,
-            channel,
-            user_id,
-            excluding_socket,
-        )
-        .await?;
+        // TOCTOU check AND member_removed broadcasts under the per-user lock.
+        // The lock serializes the count check so a disconnect racing a same-user
+        // connect can't emit member_removed for a user that is still present.
+        // The broadcast must stay inside the lock: a concurrent last-leave/first-join
+        // race on the same user emits both member_removed and member_added, and the
+        // wire order must match the decision order or clients end up with an inverted
+        // member list. The lock is keyed per (app, channel, user), so this only
+        // serializes the same user's join/leave on the same channel.
+        // Webhook enqueue and history recording happen AFTER the lock is released.
+        let should_send_event = {
+            let _lock_guard = presence_lock.lock().await;
+            let last_leave = !Self::user_has_other_connections_in_presence_channel(
+                Arc::clone(connection_manager),
+                &app_config.id,
+                channel,
+                user_id,
+                excluding_socket,
+            )
+            .await?;
 
-        if !has_other_connections {
-            debug!(
-                "User {} has no other connections in channel {}, sending member_removed events",
-                user_id, channel
-            );
+            if last_leave {
+                debug!(
+                    "User {} has no other connections in channel {}, sending member_removed events",
+                    user_id, channel
+                );
 
+                // Broadcast member_removed event to remaining clients in the channel
+                let member_removed_msg =
+                    PusherMessage::member_removed(channel.to_string(), user_id.to_string());
+                Self::broadcast_to_channel(
+                    Arc::clone(connection_manager),
+                    &app_config.id,
+                    channel,
+                    member_removed_msg,
+                    excluding_socket,
+                )
+                .await?;
+
+                let _ = Self::broadcast_to_channel(
+                    Arc::clone(connection_manager),
+                    &app_config.id,
+                    &format!("[meta]{channel}"),
+                    PusherMessage {
+                        event: Some("sockudo_internal:member_removed".to_string()),
+                        channel: Some(format!("[meta]{channel}")),
+                        data: Some(sockudo_protocol::messages::MessageData::Json(
+                            sonic_rs::json!({
+                                "channel": channel,
+                                "user_id": user_id,
+                            }),
+                        )),
+                        name: None,
+                        user_id: None,
+                        tags: None,
+                        sequence: None,
+                        conflation_key: None,
+                        message_id: None,
+                        stream_id: None,
+                        serial: None,
+                        idempotency_key: None,
+                        extras: None,
+                        delta_sequence: None,
+                        delta_conflation_key: None,
+                    },
+                    None,
+                )
+                .await;
+            }
+
+            last_leave
+        }; // _lock_guard dropped here
+
+        if should_send_event {
             // Send member_removed webhook with 3-second delay
             // Per Pusher spec: delay prevents spurious webhooks from momentary disconnects.
             // If the user reconnects within the delay, no webhook is sent.
@@ -329,48 +369,6 @@ impl PresenceManager {
                     }
                 });
             }
-
-            // Broadcast member_removed event to remaining clients in the channel
-            let member_removed_msg =
-                PusherMessage::member_removed(channel.to_string(), user_id.to_string());
-            Self::broadcast_to_channel(
-                Arc::clone(connection_manager),
-                &app_config.id,
-                channel,
-                member_removed_msg,
-                excluding_socket,
-            )
-            .await?;
-
-            let _ = Self::broadcast_to_channel(
-                Arc::clone(connection_manager),
-                &app_config.id,
-                &format!("[meta]{channel}"),
-                PusherMessage {
-                    event: Some("sockudo_internal:member_removed".to_string()),
-                    channel: Some(format!("[meta]{channel}")),
-                    data: Some(sockudo_protocol::messages::MessageData::Json(
-                        sonic_rs::json!({
-                            "channel": channel,
-                            "user_id": user_id,
-                        }),
-                    )),
-                    name: None,
-                    user_id: None,
-                    tags: None,
-                    sequence: None,
-                    conflation_key: None,
-                    message_id: None,
-                    stream_id: None,
-                    serial: None,
-                    idempotency_key: None,
-                    extras: None,
-                    delta_sequence: None,
-                    delta_conflation_key: None,
-                },
-                None,
-            )
-            .await;
 
             debug!(
                 "Successfully processed member_removed for user {} in channel {}",
@@ -418,8 +416,6 @@ impl PresenceManager {
                 user_id, channel
             );
         }
-
-        // Lock is released here when _lock_guard goes out of scope
 
         // Always broadcast presence leave to all nodes for cluster replication (for every disconnection)
         // This is done OUTSIDE the lock to avoid holding it during network I/O

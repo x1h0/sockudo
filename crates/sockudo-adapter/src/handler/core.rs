@@ -872,6 +872,59 @@ impl ConnectionHandler {
         }
     }
 
+    // Presence data is mirrored in Namespace.presence_data for lock-free reads.
+    // These helpers are the only writers of the mirror — every
+    // add_presence_info/remove_presence_info on connection state must be paired
+    // with the matching call here or reads and connection state drift apart.
+    pub(crate) fn set_namespace_presence(
+        &self,
+        app_id: &str,
+        socket_id: &SocketId,
+        channel: &str,
+        info: sockudo_core::channel::PresenceMemberInfo,
+    ) {
+        let Some(ref local_adapter) = self.local_adapter else {
+            warn!(
+                "local_adapter unavailable, namespace presence mirror not updated for socket {socket_id} in channel {channel}"
+            );
+            return;
+        };
+        let Some(namespace) = local_adapter.namespaces.get(app_id) else {
+            warn!("namespace {app_id} missing, presence mirror not updated for socket {socket_id}");
+            return;
+        };
+        namespace
+            .presence_data
+            .entry(*socket_id)
+            .or_default()
+            .insert(channel.to_string(), info);
+    }
+
+    pub(crate) fn clear_namespace_presence(
+        &self,
+        app_id: &str,
+        socket_id: &SocketId,
+        channel: &str,
+    ) {
+        let Some(ref local_adapter) = self.local_adapter else {
+            warn!(
+                "local_adapter unavailable, namespace presence mirror not cleared for socket {socket_id} in channel {channel}"
+            );
+            return;
+        };
+        let Some(namespace) = local_adapter.namespaces.get(app_id) else {
+            return;
+        };
+        if let dashmap::mapref::entry::Entry::Occupied(mut per_socket) =
+            namespace.presence_data.entry(*socket_id)
+        {
+            per_socket.get_mut().remove(channel);
+            if per_socket.get().is_empty() {
+                per_socket.remove();
+            }
+        }
+    }
+
     async fn update_connection_unsubscribe_state(
         &self,
         socket_id: &SocketId,
@@ -898,9 +951,11 @@ impl ConnectionHandler {
             let mut conn_locked = conn_arc.inner.lock().await;
             conn_locked.unsubscribe_from_channel(channel_name);
 
-            // Remove presence info if it's a presence channel
             if channel_name.starts_with("presence-") {
                 conn_locked.remove_presence_info(channel_name);
+                drop(conn_locked);
+
+                self.clear_namespace_presence(&app_config.id, socket_id, channel_name);
             }
         }
         Ok(())
