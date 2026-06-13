@@ -6,4 +6,4 @@ crates/sockudo-server/src/http_handler.rs @radudiaconu
 crates/sockudo-server/src/main.rs @radudiaconu
 crates/sockudo-webhook/** @radudiaconu
 docs/specs/ai-transport-wire-protocol.md @radudiaconu
-test/ai-conformance/** @radudiaconu
+tests/ai-conformance/** @radudiaconu

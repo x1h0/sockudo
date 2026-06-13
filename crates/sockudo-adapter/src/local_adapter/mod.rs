@@ -6,6 +6,7 @@ use self::helpers::{PendingPresenceMember, pending_presence_channel_key};
 #[cfg(feature = "tag-filtering")]
 use crate::filter_index::FilterIndex;
 use dashmap::DashMap;
+#[cfg(feature = "delta")]
 use sockudo_core::app::AppManager;
 use sockudo_core::namespace::Namespace;
 use std::sync::Arc;

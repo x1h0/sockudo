@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR/test/ai-conformance"
+cd "$ROOT_DIR/tests/ai-conformance"
 
 if [[ "${AIT_CONFORMANCE_OFFLINE:-0}" == "1" ]]; then
   node src/run.mjs

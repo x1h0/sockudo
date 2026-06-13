@@ -1,16 +1,18 @@
 use super::LocalAdapter;
+#[cfg(feature = "delta")]
 use ahash::AHashMap as HashMap;
 use bytes::Bytes;
 use sockudo_core::error::{Error, Result};
 use sockudo_core::namespace::Namespace;
 use sockudo_core::websocket::{SocketId, WebSocketRef};
 use sockudo_protocol::messages::PusherMessage;
-#[cfg(feature = "delta")]
 use sockudo_protocol::versioned_messages::extract_runtime_action;
 use std::sync::Arc;
 #[cfg(feature = "tag-filtering")]
 use std::sync::atomic::Ordering;
-use tracing::{debug, info, warn};
+#[cfg(feature = "delta")]
+use tracing::info;
+use tracing::{debug, warn};
 
 #[cfg(feature = "delta")]
 /// Parameters for sending a message to a socket with compression

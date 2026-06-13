@@ -61,7 +61,7 @@ node scripts/sdk-compat-full-matrix.mjs --execute
 | `--no-default-features` pure Pusher build | Wired | Matrix combo `no-default-pusher`. |
 | Rolling upgrade on shared Redis | Blocked for GA | Required manifest: `docs/specs/ai-transport-results/rolling-upgrade-redis.json`. |
 | Wire-protocol v1 freeze | Wired | `docs/specs/ai-transport-wire-protocol.md` is labeled `Wire protocol version: 1` and includes the compatibility promise. |
-| S13 golden transcripts | Wired | `test/ai-conformance/fixtures/golden/*` plus `AIT_CONFORMANCE_OFFLINE=1 scripts/ai-conformance-node.sh`. |
+| S13 golden transcripts | Wired | `tests/ai-conformance/fixtures/golden/*` plus `AIT_CONFORMANCE_OFFLINE=1 scripts/ai-conformance-node.sh`. |
 | S12 benchmark sign-off | Wired | `scripts/ai-transport-bench-guard.sh`, `benches/ai/baselines/ai_hot_paths.budgets.json`, and `docs/specs/ai-transport-capacity.md`. |
 | S14 scaled smoke/headline evidence | Blocked for GA | Current manifests under `docs/specs/ai-transport-results/*.not-run.json` are explicit placeholders. |
 | S11 security sign-off | Wired | `docs/specs/ai-transport-security-review.md`; CI runs `cargo audit` and `cargo deny check`. |

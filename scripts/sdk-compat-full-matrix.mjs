@@ -39,7 +39,7 @@ const lanes = [
   {
     kind: "canary",
     name: "pusher-js-v1-canary",
-    cwd: "test/ai-conformance",
+    cwd: "tests/ai-conformance",
     command: ["bash", "-lc", "AIT_CONFORMANCE_OFFLINE=1 node src/run.mjs"],
     profiles: ["default", "ai-enabled"],
   },

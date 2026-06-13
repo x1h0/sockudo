@@ -356,7 +356,34 @@ mod tests {
     #[cfg(feature = "push-fcm")]
     #[tokio::test]
     async fn fcm_service_account_source_exchanges_signed_assertion() {
-        const RSA_PRIVATE_KEY: &str = "-----BEGIN RSA PRIVATE KEY-----\nMIICXQIBAAKBgQDBg42A0sLSkY9ZCWOpxHKzTq1Rhnv4Y7TTzD/0QwVX1zGnI25r\nqC5S/7QB6G7umLXVQ7nAcYCZw4ey1cR014uzvjiZ6/zCjxEUo19F21VyJDcUuaQV\n+reHPEmCPXTvJiRIayERZ9yeejHedA8nAmQomu10RV3WFSrtovcaZqID7QIDAQAB\nAoGAaD2cMQPXbKR6aoTzSdUH0G0WUe82wpO7KchBvyuHKk1Ccv1UEuwSoCUb61cw\nwphCgvIrkm3Rz4KTi5M5c5NUrfscNHpUGksLi5QLL0ryethvVdU960LhMBdnPVkL\ntjNkoDvDCpmdpqPFjC7SG7iefsAPrM1ssSyzlNIKjPLknAECQQDr4oee/lrb8Xd7\nNTUbQBSHdxGbncotZ089VQF3rG0UmWeIHjysNIDmSssYJ4iDn1kPuJrDg9f8LSg8\nn3lRbIztAkEA0gQLoCDLYpbjsf7WNTu0tfZUzv/cQOYuHXW0d24lLuXZ8brI3WOO\n1CgqXYjD9V2axUBuaLMgnKigmeIiE6NzAQJAOgNOg4Xe5rTuQ7kERJ1v7xkTlYgr\nDxuXW2gqojof4a8QzWNSXK/U+85tQJWId4abKsimF2u3lOeuO6qk9aeSyQJBAM9J\nGORimfvkLDbp7Sk7lgCnckuhdBZGWqvPGmFqwJ6KVVPm5QzGkBnMzwvkym0qh3E7\nR/5lFsIpGeLotHOntwECQQDBPAAFfhieU8veUdyVyC/bu+uv6oyUW/35mFM+6L+Y\nz3SK+k2yxYhWqUN3c8EiwWk1Ja93qCxpAqirxf1X7h6C\n-----END RSA PRIVATE KEY-----\n";
+        const RSA_PRIVATE_KEY: &str = r#"-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEAvlLrT41xdK7n900f6utmHWwPSc3rwtSZxHAHwbjoG0oqWJgw
+dgSRr+z4loFx7Q3fBDO5ypmg8k3z1kNElW6BPyIkpQ/t6HtlilrGZTOBasTKris/
+VFM/ZF9YhtSG5tc1oUkzMqcptcpiQEvArBYqso9gZbl/FGx6IhDj+EF1JtQjTJHK
+NrGUA3QgabBkExRvBTmpxfkpDYVImXYUSDRS1nmAl4cYmOEJThfVL+usQFhtJqHb
+RKDlQquhbgZ68z2nIsWeEZPi2hGXzPEkVsQvhFkL89cFMo2CMT8+/uCpfMEpcOjq
+4NItSiCp+LVdmOlJFVBDOh2MB1qrUH59zpbgZQIDAQABAoIBABSiJrKkMfWldK6B
+5QDx7ksoSOwGcBXaOKVsQ9sDsd4rhzW9ohtZWXYKKdUfSXuasl/hP7YwO5upSdMj
+zc6pgUeX6wMeG/vFTPfX6YRVNiWeGh8RvzbkI449K/rKFan3EPBgYDWQm9wCie5Q
+iB3f9VcQZjIBDz7ml8MTs7NZXVsNGrs7nENbPD2w8tdb1zYq1VNIC2AUNKIyGqrK
+VuCnQszSuU80ZV/OKJv4rocmxemDLIT2APNo4FpXNDfoOHh3g22WC7nKaMKabbI2
+QHWPbyblD+pfE/tBAN8W0AW8ClWkqvOMZRctiivhwY3J4VjNo2lkImVQ7rQ+dgMz
+adt5H2ECgYEA4aPUAabGAQ3u1JBR080r+3FbVp9ZOXANSdzCEKhfdVa2WZzfTCwG
+H0EJv5V8W5JVfxXfHuct7HROaxXO/yf/wNQOF1ilg56e4olWZltCx7TEqq8Cm5hZ
+4QC+bnRKkytKlKuJ4wX7jNz8woy2t9nS3uCu7TXobDhlv57TdwLoNmkCgYEA1+6h
+DISNcI1ZLNn1FJQX9WSeWJ+GE3zMT/2heF1r5ASEfVkRNEuUUI3tYuVL27+8TuA1
+SArM4LGOKIE0Q2F0mTKYfgt5JLetEUObOO1G8Ag2awSDwzMLqrLEOXrWpvU5Tpxk
+O2435c6I2NiBHFXzIf+b5ytA1WXrpsdqWU+FMp0CgYB/rK66nH5vfE3Gkz7p5K9d
+YH/5XMMk4AV05OgeetdA0ubtf/lN5Z81Mhzs/g3W1s9v0JVmrBLtN8Zji3yMHjr2
+BkdO6IcHGcr3jhSIaF06GUwq9Eo6dpNs4HngkAbejWFvDD1Ca1EyHJ0dDHgbQbKz
+EFmKubUg/yx7p8gqEEgK+QKBgBOp12CccYTeWlCLSJYnJkdickj/veXoZ3KhViLv
+3vNUtfv0MGzitQ7g3c0ztES+oRdNs4xr71xGzvtBSNEZ/tQ0l05jHRUK5Oe9kFUO
+xnb1SH9WWelcrKNOxC+3z/REQIO4GiiPUOfMdwnILXm3GfzumfPjLHRCY8M8RaL8
+atTBAoGBALQvQ+5ZGa457X7cTFfGfQ9Pe8ZiGpeO1Mbwu9wPfcWdqgWhopeXqTqL
+yKEk2CX6cfH47/fxx9mxe0RBIurDCI6GSoPdD0znXm9VirlPxq+N62YnUhphRz/H
+946kSsrf1DmXIDbKRchX8db+4oMMgSCTJsndbhKy9lBgh10Qiu2Z
+-----END RSA PRIVATE KEY-----
+"#;
         let http = MockHttpClient::with_responses(vec![response(
             200,
             json!({"access_token": "oauth-access-token", "expires_in": 3600}),

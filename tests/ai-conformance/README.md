@@ -10,7 +10,7 @@ WebSocket client to exercise the server wire surface directly.
 Start an AI-enabled Sockudo server, then:
 
 ```bash
-cd test/ai-conformance
+cd tests/ai-conformance
 node src/run.mjs
 ```
 

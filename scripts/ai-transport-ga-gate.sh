@@ -43,7 +43,7 @@ check_ci_evidence() {
   require_file "docs/content/docs/server/ai-transport-production-checklist.mdx"
   require_file "config/ai-transport.example.toml"
   require_file "deny.toml"
-  require_file "test/ai-conformance/package.json"
+  require_file "tests/ai-conformance/package.json"
   require_file "benches/ai/baselines/ai_hot_paths.budgets.json"
   require_file "scripts/ai-transport-s14-release-evidence.sh"
   require_file "scripts/ai-transport-rolling-upgrade-redis.mjs"
