@@ -1,0 +1,25 @@
+{
+  "name": "@sockudo/dashboard-api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "migrate": "bun run src/cli/migrate.ts",
+    "seed:admin": "bun run src/cli/seed-admin.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.758.0",
+    "@aws-sdk/util-dynamodb": "^3.758.0",
+    "hono": "^4.7.4",
+    "jose": "^6.0.8",
+    "mysql2": "^3.14.0",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.11",
+    "typescript": "^5.9.3"
+  }
+}
