@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const envFiles = [
-  join(import.meta.dir, "..", ".env"),
   join(import.meta.dir, "..", "..", ".env"),
+  join(import.meta.dir, "..", ".env"),
 ];
 
 function parseEnvValue(raw: string): string {
@@ -26,7 +26,7 @@ function loadDashboardEnv(): void {
       const idx = trimmed.indexOf("=");
       if (idx <= 0) continue;
       const key = trimmed.slice(0, idx).trim();
-      if (!key || process.env[key] !== undefined) continue;
+      if (!key) continue;
       process.env[key] = parseEnvValue(trimmed.slice(idx + 1));
     }
   }
