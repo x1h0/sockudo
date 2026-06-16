@@ -66,10 +66,13 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }
+compact_str = { workspace = true }
 md5 = { workspace = true }
 sockudo-app = { workspace = true }
 num_cpus = { workspace = true }
+papaya = { workspace = true }
 criterion = { workspace = true }
+scc = { workspace = true }
 
 [[bench]]
 name = "hot_path_replacements"
