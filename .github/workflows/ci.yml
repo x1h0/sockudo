@@ -113,6 +113,24 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Free runner disk space
+        run: |
+          echo "Disk usage before cleanup:"
+          df -h
+
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/go \
+            /opt/hostedtoolcache/Python
+
+          docker system prune -af || true
+
+          echo "Disk usage after cleanup:"
+          df -h
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -225,7 +243,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [4.6.0] - 2026-06-17
+
 ### Added
 
 - AI Transport GA readiness gates, including `scripts/ai-transport-ga-gate.sh`, the release
@@ -16,6 +18,10 @@
 
 - Docker release builds now use the workspace Rust toolchain version and include the push,
   AI Transport, and benchmark workspace manifests during dependency-cache setup.
+- Crates.io release publishing now includes the `sockudo-ai-transport` crate before downstream
+  crates that can depend on it.
+- The CI test suite now frees unused runner toolchains and avoids restoring cached `target/`
+  artifacts so full-feature test builds do not exhaust GitHub runner disk space.
 
 ## [4.5.2] - 2026-06-13
 

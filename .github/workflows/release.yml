@@ -362,6 +362,7 @@ jobs:
             sockudo-rate-limiter
             sockudo-webhook
             sockudo-delta
+            sockudo-ai-transport
             sockudo-push
             sockudo-adapter
             sockudo
