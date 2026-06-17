@@ -1,7 +1,7 @@
 # AGENTS.md
 
 This is the top-level operating contract for coding agents working in
-`/Users/radudiaconu/Desktop/Code/Rust/sockudo`. It applies to the whole monorepo unless a deeper
+`sockudo`. It applies to the whole monorepo unless a deeper
 `AGENTS.md` overrides a subset of directories.
 
 ## Mission

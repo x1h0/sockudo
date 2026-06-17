@@ -1,292 +1,285 @@
 # CLAUDE.md
 
-This file gives coding agents a compact, code-oriented map of the Sockudo monorepo. Trust the code
-over this file if they drift.
+This is the top-level operating contract for coding agents working in
+`sockudo`. It applies to the whole monorepo unless a deeper
+`CLAUDE.md` overrides a subset of directories.
 
-## Project Overview
+## Mission
 
-Sockudo is a self-hosted realtime platform:
+Sockudo is a Rust realtime server and SDK monorepo. The server must preserve strict Protocol V1
+Pusher compatibility while advancing Protocol V2 Sockudo-native features:
 
-- Protocol V1 stays strictly Pusher-compatible.
-- Protocol V2 adds Sockudo-native serials, message IDs, recovery, durable history, mutable
-  messages, annotations, tag filtering, delta compression, presence history, capability-token auth,
-  push, and optional AI Transport.
-- Official client SDKs, HTTP/server SDKs, docs, dashboard, Helm, Compose, and operational tooling
-  now live in this repository.
+- horizontal fanout across multiple nodes
+- durable history, rewind, and two-tier recovery
+- versioned mutable messages
+- presence and presence history
+- annotations
+- push notifications
+- metrics, webhooks, rate limits, and operator APIs
+- delta compression and tag filtering
+- optional AI Transport built on the same durable primitives
 
-AI Transport is additive. Build it with Cargo feature `ai-transport`, enable it at runtime with
-`[ai_transport] enabled = true`, and extend the existing versioned-message, history, recovery,
-annotation, push, and presence subsystems. Do not build parallel AI-only storage or fanout paths.
+Default posture: execute clear tasks directly, keep diffs reviewable, verify before claiming
+completion, and preserve existing behavior unless the task explicitly changes it.
 
-## Top-Level Layout
+## Autonomy
 
-```text
-crates/              Rust server workspace
-benches/ai/          Criterion AI hot-path benchmarks
-client-sdks/         Realtime client SDKs and @sockudo/ai-transport
-server-sdks/         HTTP/server SDKs
-dashboard/           Operator API and Vue UI
-docs/                Documentation site
-config/              Local config examples
-ops/                 Migrations and operational assets
-charts/              Helm chart
-tests/               Conformance, dashboard, load, and binary fixtures
-tools/               Probes, chaos tooling, and support utilities
-```
+- Proceed automatically on clear, reversible next steps.
+- Ask only when the choice is materially ambiguous, destructive, or changes product scope.
+- If blocked, try the next reasonable path before escalating.
+- Use bounded subagents only when they materially improve throughput or correctness.
+- Never revert unrelated work. The tree may already contain user changes.
 
-## Rust Workspace
+## Repository Map
 
-The root Cargo workspace owns the server crates and `benches/ai`. Independently released SDK crates
-under `server-sdks/` are excluded from the workspace.
+Server workspace:
 
-```text
-crates/
-  sockudo-protocol        protocol messages, V1/V2 prefixes, extras, wire payloads
-  sockudo-filter          tag filter parsing and matching
-  sockudo-core            traits, config, auth, history, version store, errors
-  sockudo-app             app-manager backends
-  sockudo-cache           cache backends
-  sockudo-queue           queue backends
-  sockudo-rate-limiter    rate limiters and Tower middleware
-  sockudo-metrics         Prometheus metrics driver
-  sockudo-webhook         webhook delivery
-  sockudo-delta           delta compression runtime
-  sockudo-push            push storage, queues, providers, feedback, scheduler
-  sockudo-ai-transport    AI Transport validation, rollup, conformance helpers
-  sockudo-adapter         connections, subscriptions, presence, fanout, recovery
-  sockudo-server          binary, HTTP/WS routes, bootstrap, durable stores
-```
+- `crates/sockudo-protocol`: protocol message types, V1/V2 prefixing, extras, versioned wire payloads
+- `crates/sockudo-filter`: tag filtering
+- `crates/sockudo-core`: shared traits, config, errors, auth, history, version store, annotations,
+  presence history, common types
+- `crates/sockudo-app`: app-manager backends
+- `crates/sockudo-cache`: cache backends
+- `crates/sockudo-queue`: queue backends
+- `crates/sockudo-rate-limiter`: rate limiting and middleware
+- `crates/sockudo-metrics`: Prometheus metrics
+- `crates/sockudo-webhook`: webhook delivery
+- `crates/sockudo-delta`: delta compression
+- `crates/sockudo-push`: push providers, device registrations, channel subscriptions, publish
+  pipeline, durable status, feedback, scheduler
+- `crates/sockudo-ai-transport`: AI Transport validation, rollup, and conformance helpers
+- `crates/sockudo-adapter`: connection handling, presence, horizontal scaling, replay/recovery,
+  fanout
+- `crates/sockudo-server`: binary, HTTP/WS handlers, bootstrap, durable history/version stores,
+  push API
 
-Dependency sketch:
+Other permanent areas:
 
-```text
-sockudo-protocol --+
-sockudo-filter ----+--> sockudo-core --+--> app/cache/queue/rate-limiter/metrics/webhook/delta/push
-                   |                  +--> sockudo-adapter --> sockudo-server
-                   +--> sockudo-ai-transport
-```
+- `benches/ai`: Criterion benchmark suite and budgets for AI hot paths
+- `client-sdks`: official realtime client SDKs plus `sockudo-ai-transport-js`
+- `server-sdks`: official HTTP/server SDKs
+- `dashboard`: operator API and Vue UI
+- `docs`: documentation site
+- `config`, `ops`, `charts`, `docker-compose*.yml`: configuration, migrations, Helm, Compose
+- `tests`, `tools`: conformance, load, dashboard, chaos, probes, and support tooling
 
-Backend-specific durable history and version-store implementations live in `sockudo-server` because
-they depend on database clients and runtime bootstrap.
+High-value reference surfaces:
 
-## SDK Layout
+- `docs/content/docs/server/*`
+- `docs/content/docs/clients/*`
+- `docs/content/docs/server-sdks/*`
+- `docs/content/docs/reference/*`
+- `docs/specs/ai-transport-wire-protocol.md`
+- `docs/specs/ai-transport-capacity.md`
+- `config/config.toml`
+- `Makefile`
 
-Realtime clients:
+## Core Principles
 
-| Directory | Package |
-| --- | --- |
-| `client-sdks/sockudo-js` | `@sockudo/client` |
-| `client-sdks/sockudo-ai-transport-js` | `@sockudo/ai-transport` |
-| `client-sdks/sockudo-swift` | `SockudoSwift` |
-| `client-sdks/sockudo-kotlin` | `io.sockudo:sockudo-kotlin` |
-| `client-sdks/sockudo-flutter` | `sockudo_flutter` |
-| `client-sdks/sockudo-dotnet` | `Sockudo.Client` |
-| `client-sdks/sockudo-python` | `sockudo-python` |
+- Preserve V1 compatibility unless explicitly changing it.
+- Keep V2-only features gated and stripped from V1 delivery.
+- Reuse current abstractions before adding new ones.
+- Prefer deletion over addition.
+- Avoid new dependencies unless the need is explicit and justified.
+- Keep behavior changes, tests, and docs in the same change.
+- Treat wire payloads, HTTP response shapes, config keys, and SDK public APIs as compatibility
+  contracts.
+- Do not log secrets: app secrets, provider credentials, device tokens, private keys, or raw push
+  payloads unless a debug-only option explicitly permits it.
 
-HTTP/server SDKs:
+## Execution Protocol
 
-| Directory | Package |
-| --- | --- |
-| `server-sdks/sockudo-http-node` | `sockudo` |
-| `server-sdks/sockudo-http-python` | `sockudo-http-python` |
-| `server-sdks/sockudo-http-php` | `sockudo/sockudo-php-server` |
-| `server-sdks/sockudo-http-ruby` | `sockudo` |
-| `server-sdks/sockudo-http-go` | `github.com/sockudo/sockudo-http-go/v5` |
-| `server-sdks/sockudo-http-rust` | `sockudo-http` |
-| `server-sdks/sockudo-http-java` | `io.sockudo:sockudo-http-java` |
-| `server-sdks/sockudo-http-dotnet` | `SockudoServer` |
-| `server-sdks/sockudo-http-swift` | `Sockudo` |
+1. Inspect relevant code, docs, and package metadata first.
+2. State the working understanding briefly while working.
+3. For cleanup/refactor work, write a cleanup plan and lock behavior with tests when not already
+   protected.
+4. Make the smallest coherent change that solves the task.
+5. Run narrow verification first, then widen as risk increases.
+6. Read diagnostics before deciding the task is done.
+7. End with what changed, what was verified, and any remaining risks.
 
-Keep SDK package names, manifests, README files, and release metadata stable unless the task is
-explicitly about changing an SDK release surface.
+## Search And Reading
 
-The old per-SDK GitHub repositories are legacy mirrors and should be archived. This monorepo is the
-source of truth. Until package registry publishing is fixed, install docs should use local paths
-inside this monorepo rather than old per-SDK repository URLs.
+- Prefer `rg` and `rg --files`.
+- Read crate boundaries plus immediate call sites before changing shared Rust code.
+- For SDK changes, read the package manifest, public README, tests, and release/build scripts before
+  editing public API.
+- For protocol, adapter, versioned messages, recovery, history, presence, annotations, push, or AI
+  Transport work, inspect runtime code and docs before editing.
+- Do not assume a feature is single-node only. Check horizontal and failure-path code.
 
-## Crate Responsibilities
+## Monorepo And SDK Rules
 
-| Crate | Main responsibilities | Key files |
-| --- | --- | --- |
-| `sockudo-protocol` | Pusher-compatible messages, V2 prefixing, extras, versioned realtime frames | `src/messages.rs`, `src/protocol_version.rs`, `src/versioned_messages.rs` |
-| `sockudo-filter` | Tag-filter expression model and matching | `src/node.rs`, `src/ops.rs` |
-| `sockudo-core` | Traits, config, auth, errors, `HistoryStore`, `VersionStore`, annotations, presence history | `src/options.rs`, `src/history.rs`, `src/version_store.rs`, `src/annotations.rs`, `src/presence_history.rs` |
-| `sockudo-app` | App-manager backends | `src/*_app_manager.rs` |
-| `sockudo-cache` | Memory/Redis cache managers | `src/*` |
-| `sockudo-queue` | Memory and external queue managers | `src/*` |
-| `sockudo-rate-limiter` | Rate limit drivers and Tower middleware | `src/*` |
-| `sockudo-metrics` | Prometheus metrics exporter and metric catalog | `src/prometheus.rs` |
-| `sockudo-webhook` | Webhook event transformation and delivery | `src/*` |
-| `sockudo-delta` | Delta compression state and algorithms | `src/*` |
-| `sockudo-push` | Credentials, device registrations, subscriptions, publish planning, queues, dispatch, feedback | `src/domain.rs`, `src/storage.rs`, `src/pipeline.rs`, `src/dispatch.rs`, `src/scheduler.rs` |
-| `sockudo-ai-transport` | AI extras validation, lifecycle conventions, append rollup, conformance helpers | `src/lib.rs`, `tests/` |
-| `sockudo-adapter` | Connection manager, local/horizontal fanout, subscriptions, presence, recovery, rollup egress | `src/handler/*`, `src/local_adapter.rs`, `src/replay_buffer.rs` |
-| `sockudo-server` | HTTP/WS routes, startup, database-backed history/version stores, push HTTP API | `src/main.rs`, `src/http_handler.rs`, `src/push_http.rs`, `src/history_*.rs` |
+- Keep server internals under `crates/`; do not move production Rust crates into SDK folders.
+- Keep realtime clients under `client-sdks/<repo-name>`.
+- Keep HTTP/server SDKs under `server-sdks/<repo-name>`.
+- Keep `client-sdks/sockudo-ai-transport-js` with client SDKs; it is a client-side AI Transport SDK
+  layered on `@sockudo/client`.
+- Treat the old per-SDK GitHub repositories as archived/legacy mirrors. New source changes,
+  examples, and install docs should point at this monorepo and package-local paths until registry
+  publishing is fixed.
+- Preserve imported SDK package names, manifests, README files, and release metadata unless the task
+  is explicitly about changing them.
+- Do not accidentally add SDK crates to the root Cargo workspace. Independently released Rust SDKs
+  belong in `Cargo.toml` `workspace.exclude`.
+- Do not use submodules for SDK imports unless explicitly requested.
+- When refreshing imported SDKs, record source repository and commit in the relevant SDK group
+  README.
 
-## Feature Flags
+## Feature Flag Discipline
 
-Important server features:
+- Check touched crate `Cargo.toml` files and `crates/sockudo-server/Cargo.toml`.
+- Keep AI Transport behind Cargo feature `ai-transport` and runtime `[ai_transport]`.
+- Keep push behind feature/config surfaces already used by `sockudo-push` and `sockudo-server`.
+- Keep V2 feature propagation explicit; do not assume `full` is the only supported build.
+- Compile targeted feature combinations when behavior crosses feature boundaries.
 
-- `v2`: Protocol V2 bundle.
-- `ai-transport`: AI Transport validation, rollup, and conformance surfaces. Not default.
-- `push`: push HTTP/runtime support through `sockudo-push`.
-- `redis`, `redis-cluster`, `nats`, `pulsar`, `rabbitmq`, `google-pubsub`, `kafka`, `iggy`:
-  adapter/cache/queue integrations as applicable.
-- `mysql`, `postgres`, `dynamodb`, `surrealdb`, `scylladb`: app, history, version-store, and push
-  storage backends as applicable.
-- `sqs`, `sns`, `lambda`: queue/webhook/cloud integrations.
-- `full`: all production integrations plus `ai-transport` and `push` where wired.
+## Protocol And Compatibility
 
-Build examples:
+- Preserve Pusher-compatible Protocol V1 wire behavior.
+- Keep V2 fields gated and stripped from V1 clients.
+- Add or update tests for any wire-visible change.
+- Keep HTTP auth, channel auth, user auth, webhook validation, and idempotency compatible with
+  server SDK expectations.
+- Link significant AI Transport protocol work to
+  `docs/specs/ai-transport-wire-protocol.md`.
 
-```bash
-cargo build -p sockudo
-cargo build -p sockudo --features "v2,ai-transport,redis,postgres,push"
-cargo build -p sockudo --release --features full
-cargo build --workspace
-```
+## Stateful Subsystems
 
-## Core Subsystems
+### Versioned Messages
 
-### Protocol V1 And V2
+- Build on `MessageAction` and `VersionStore`; do not add parallel mutable-message state.
+- Preserve `message_serial`, `version_serial`, `history_serial`, and `delivery_serial` continuity.
+- Keep mutation authorization parity across HTTP and WebSocket actor contexts.
+- Own-scoped mutations require verified actor identity and matching original creator identity.
 
-V1 clients receive Pusher-compatible frames with Sockudo-only fields stripped. V2 clients get
-`sockudo:` prefixes, serials, message IDs, extras, recovery frames, delta/filter features,
-mutable-message actions, annotations, and AI Transport conventions when enabled.
+### Durable History And Recovery
 
-Key files: `sockudo-protocol/src/protocol_version.rs`,
-`sockudo-adapter/src/local_adapter.rs`, `sockudo-server/src/ws_handler.rs`.
+- Keep durable history distinct from the hot replay buffer.
+- Preserve continuity semantics for `stream_id`, `serial`, cursors, and replay.
+- Fail closed when continuity cannot be proven.
+- Use bounded retention and opaque cursors.
+- For late-join/history work, respect `until_attach` gaplessness.
 
-### Versioned Mutable Messages
+### Presence And Presence History
 
-`MessageAction` supports `create`, `update`, `delete`, `append`, and `summary`. `VersionStore`
-reserves gapless delivery positions, appends versions, reads latest visible state, pages version
-history, replays after delivery serial, projects latest-by-history, and purges expired records.
-
-HTTP surfaces include publish-created mutable messages through `/events`, mutation endpoints under
-`/channels/{channel}/messages/{message_serial}/{update|delete|append}`, latest reads, and version
-history. Own-scoped mutation grants require verified connection identity.
-
-Key files: `sockudo-protocol/src/versioned_messages.rs`,
-`sockudo-core/src/versioned_messages.rs`, `sockudo-core/src/version_store.rs`,
-`sockudo-core/src/versioned_message_auth.rs`, `sockudo-server/src/http_handler.rs`.
-
-### Durable History, Rewind, And Recovery
-
-`HistoryStore` is distinct from the hot replay buffer. Durable history owns retention, cursors,
-stream state, reset/purge, and cold recovery. Protocol V2 recovery first tries hot replay, then
-durable history when continuity can be proven. Subscribe-time rewind reads recent history and
-`until_attach` bounds client history pages at the attach serial so late joiners get gapless history
-plus live delivery.
-
-Key files: `sockudo-core/src/history.rs`, `sockudo-adapter/src/replay_buffer.rs`,
-`sockudo-adapter/src/handler/recovery.rs`, `sockudo-adapter/src/handler/history_frames.rs`,
-`sockudo-adapter/src/handler/subscription_management.rs`, `sockudo-server/src/history_*.rs`.
+- Preserve first-join and last-leave correctness.
+- Distinguish current membership from historical transition records.
+- Consider reconnect races, duplicate disconnects, multi-connection users, and degraded durable
+  history state.
 
 ### Annotations
 
-Annotations are V2 mutable side records with publish/delete, summary projection, raw subscription
-mode, own/any delete authorization, and metrics. They are feature/config gated and delivered only
-to V2 clients that request annotation mode.
-
-Key files: `sockudo-core/src/annotations.rs`, `sockudo-adapter/src/handler/annotations.rs`,
-`sockudo-server/src/http_handler.rs`.
+- Preserve raw annotation delivery gating and summary projection semantics.
+- Keep annotation publish/delete auth separate from message mutation auth.
 
 ### Push
 
-`sockudo-push` handles provider credentials, device registrations, channel subscriptions, publish
-requests, durable idempotency/status, fanout planning, queues, retries, circuit breakers, provider
-dispatch, feedback, scheduled-job cancellation, and cleanup. Realtime publishes may trigger channel
-push through `extras.push` or `[[push_rules]]`.
-
-Key files: `sockudo-push/src/domain.rs`, `sockudo-push/src/storage.rs`,
-`sockudo-push/src/pipeline.rs`, `sockudo-push/src/dispatch.rs`, `sockudo-server/src/push_http.rs`.
-
-### Presence History
-
-Presence history records authoritative joins/leaves separately from current membership. It can use
-memory or durable history as storage and supports paging, snapshots, degraded/reset-required state,
-retention, and metrics.
-
-Key files: `sockudo-core/src/presence_history.rs`, `sockudo-adapter/src/presence.rs`,
-`sockudo-server/src/presence_history.rs`.
+- Preserve device registration, channel subscription, provider credential, publish status,
+  idempotency, queue, retry, feedback, and scheduler contracts.
+- Keep provider outcome and durable status retention observable.
 
 ### AI Transport
 
-AI Transport defines a session-as-channel model, lifecycle events (`ai-input`, `ai-output`,
-`ai-turn-start`, `ai-turn-end`, `ai-cancel`), typed `extras.ai.transport` and `extras.ai.codec`,
-turn/stream validation, append rollup, orphan cancellation, conformance tests, load/chaos tooling,
-and capacity docs. It depends on versioned messages, durable history, recovery, presence, push, and
-capability-token auth rather than replacing them.
+- Build on versioned messages, durable history, recovery, presence, annotations, and push.
+- Validate external AI extras/headers at the edge with precise errors.
+- Treat append rollup as egress-only; persistence, history, recovery, webhooks, and push see every
+  original mutation.
+- Protect fanout hot paths: no unbounded buffers, no locks held across `.await`, no avoidable
+  per-subscriber payload copies.
 
-Key files: `crates/sockudo-ai-transport/src/lib.rs`,
-`crates/sockudo-ai-transport/tests/`, `tests/ai-conformance/`, `tests/load/`, `tools/chaos/`,
-`docs/specs/ai-transport-wire-protocol.md`.
+## Observability
 
-## Configuration Surfaces
+For stateful/distributed changes, consider metrics and logs for:
 
-Important sections:
+- success/failure counters
+- degraded or reset-required state
+- duplicate suppression
+- bounded queue/backlog depth
+- recovery source and failure code
+- push provider outcome and status retention
+- AI rollup ratio, flush latency, active streams, turn outcomes
 
-- `[versioned_messages]`
-- `[history]` and backend subsections
-- `[presence_history]`
-- `[annotations]`
-- `[push]`, `[push.retry]`, `[push.circuit_breaker]`, `[push.default_quotas]`,
-  `[push.payload_redaction]`
-- `[[push_rules]]`
-- `[ai_transport]`, `[[ai_transport.channels]]`, `[ai_transport.rollup]`
+## Documentation Sync
 
-Protocol V2 capability tokens are accepted by V2 connection query `token` and refreshed with
-`sockudo:auth`; they are not a TOML feature switch.
+Update docs when changing:
 
-Reference docs: `docs/content/docs/reference/configuration.mdx`,
-`docs/content/docs/reference/environment-variables.mdx`.
+- HTTP API request or response shapes
+- protocol-visible payloads
+- SDK public APIs or install instructions
+- feature availability or comparison claims
+- scaling semantics
+- versioned messages, history, recovery, presence history, annotations, push, or AI Transport
+- configuration or feature-flag behavior
 
-## Test Locations
+Likely docs:
 
-- Rust unit tests: inline `#[cfg(test)]` modules in each crate.
-- Rust integration tests: each crate's `tests/` directory.
-- AI Transport Rust conformance: `crates/sockudo-ai-transport/tests/`.
-- SDK-facing AI conformance: `tests/ai-conformance/`.
-- Scale and load: `tests/load/`.
-- Dashboard tests: `tests/dashboard/`.
-- AI Criterion budgets: `benches/ai/`.
-- Push integration smoke: `crates/sockudo-push/tests/`.
-- SDK package tests: package-local `test`, `tests`, `spec`, or native language test folders.
+- `README.md`
+- `docs/content/docs/server/http-api.mdx`
+- `docs/content/docs/server/history-recovery.mdx`
+- `docs/content/docs/server/mutable-messages.mdx`
+- `docs/content/docs/server/ai-transport-*.mdx`
+- `docs/content/docs/clients/*.mdx`
+- `docs/content/docs/server-sdks/*.mdx`
+- `docs/content/docs/reference/configuration.mdx`
+- `docs/content/docs/reference/environment-variables.mdx`
+- `docs/content/docs/reference/http-endpoints.mdx`
+- `docs/specs/ai-transport-wire-protocol.md`
 
-## Development Commands
+## Verification Standard
 
-Server:
+Small local change:
+
+- run focused tests for the touched crate, package, or module
+- run formatting if Rust or SDK source changed
+
+Standard backend/API/docs-with-guard change:
+
+- `cargo fmt --all`
+- focused tests
+- docs type/build checks when docs changed
+
+High-risk protocol, presence, scaling, recovery, history, annotations, push, or AI Transport:
+
+- `cargo fmt --all`
+- focused subsystem tests
+- relevant integration/conformance tests
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+
+SDK changes:
+
+- use the package-local manager and scripts from that SDK README/manifest
+- run the narrow language-specific test first, then add live Sockudo integration tests when behavior
+  depends on the server
+
+If full verification is too expensive or blocked, say exactly what was not run and why.
+
+## Useful Commands
 
 ```bash
 cargo fmt --all
 cargo test --workspace
+cargo test -p sockudo-core
+cargo test -p sockudo-adapter
+cargo test -p sockudo-ai-transport
+cargo test -p sockudo-push
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build -p sockudo --features "v2,ai-transport,redis,postgres,push"
 scripts/ai-transport-bench-guard.sh
 AIT_CONFORMANCE_OFFLINE=1 scripts/ai-conformance-node.sh
+cd docs && npm run types:check && npm run build
 ```
 
-Docs:
+## Safety Constraints
 
-```bash
-cd docs
-npm run types:check
-npm run build
-```
+- Never run destructive commands like `git reset --hard`, `git checkout --`, or broad `rm -rf`
+  unless explicitly requested.
+- Do not rewrite history unless explicitly requested.
+- Do not amend commits unless explicitly requested.
+- Treat production-facing config, migrations, credentials, and destructive history operations as
+  high risk.
 
-SDKs are package-local. Read the SDK manifest and README, then use the native toolchain: `bun`,
-`pnpm`, `npm`, `pytest`, `cargo`, `go test`, `gradle`, `swift test`, `dotnet test`, `composer`, or
-`bundle`.
+## Final Response Contract
 
-## Compatibility Rules
-
-- Preserve V1 wire output unless the task explicitly changes Pusher compatibility.
-- AI Transport, capability tokens, mutable messages, annotations, client history frames, and rollup
-  are V2-only.
-- No client-asserted `client_id` is authoritative; identity comes from signed-in socket state or
-  trusted app-key HTTP context.
-- No locks across `.await` in hot fanout paths, no unbounded queues, and no avoidable per-message
-  allocations on broadcast paths.
-- Update docs and tests whenever a protocol-visible shape, config key, feature flag, endpoint, SDK
-  public API, or recovery/history semantic changes.
+When closing a task, report what changed, how it was verified, and remaining risks or gaps.
