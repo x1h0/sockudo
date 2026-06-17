@@ -317,7 +317,7 @@ func TestGetChannelsSuccessCase(t *testing.T) {
 		res.WriteHeader(200)
 		testJSON := "{\"channels\":{\"presence-session-d41a439c438a100756f5-4bf35003e819bb138249-5cbTiUiPNGI\":{\"user_count\":1},\"presence-session-d41a439c438a100756f5-4bf35003e819bb138249-PbZ5E1pP8uF\":{\"user_count\":1},\"presence-session-d41a439c438a100756f5-4bf35003e819bb138249-oz6iqpSxMwG\":{\"user_count\":1}}}"
 
-		fmt.Fprintf(res, testJSON)
+		fmt.Fprint(res, testJSON)
 		assert.Equal(t, "GET", req.Method)
 
 	}))
@@ -342,7 +342,7 @@ func TestGetChannelSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		res.WriteHeader(200)
 		testJSON := "{\"user_count\":1,\"occupied\":true,\"subscription_count\":1}"
-		fmt.Fprintf(res, testJSON)
+		fmt.Fprint(res, testJSON)
 
 		assert.Equal(t, "GET", req.Method)
 	}))
@@ -366,7 +366,7 @@ func TestGetChannelUserSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		res.WriteHeader(200)
 		testJSON := "{\"users\":[{\"id\":\"red\"},{\"id\":\"blue\"}]}"
-		fmt.Fprintf(res, testJSON)
+		fmt.Fprint(res, testJSON)
 
 		assert.Equal(t, "GET", req.Method)
 	}))
@@ -463,7 +463,7 @@ func TestTriggerBatchInfoSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		res.WriteHeader(200)
 		testJSON := "{\"batch\":[{\"subscription_count\":2,\"user_count\":1},{\"subscription_count\":3}]}"
-		fmt.Fprintf(res, testJSON)
+		fmt.Fprint(res, testJSON)
 		assert.Equal(t, "POST", req.Method)
 
 		actualBody, err := ioutil.ReadAll(req.Body)
