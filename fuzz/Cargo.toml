@@ -12,6 +12,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
+sonic-rs = "0.5.6"
 sockudo-core = { path = "../crates/sockudo-core" }
 sockudo-protocol = { path = "../crates/sockudo-protocol" }
 sockudo-push = { path = "../crates/sockudo-push", default-features = false }

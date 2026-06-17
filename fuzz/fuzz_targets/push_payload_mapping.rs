@@ -5,6 +5,7 @@ use sockudo_push::{
     ChannelPushRule, ProviderOverridePayload, PushPayload, PushProviderKind,
     render_provider_payload,
 };
+use sonic_rs::json;
 
 const MAX_INPUT_BYTES: usize = 64 * 1024;
 
@@ -29,7 +30,7 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(overrides) = serde_json::from_slice::<Vec<ProviderOverridePayload>>(data) {
         let payload = PushPayload {
             template_id: None,
-            template_data: serde_json::json!({}),
+            template_data: json!({}),
             title: None,
             body: None,
             icon: None,
@@ -48,7 +49,7 @@ fuzz_target!(|data: &[u8]| {
     }
 
     if let Ok(rule) = serde_json::from_slice::<ChannelPushRule>(data) {
-        let message = serde_json::json!({
+        let message = json!({
             "title": "hello",
             "body": "world",
             "extra": "value"

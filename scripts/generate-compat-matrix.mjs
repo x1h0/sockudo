@@ -9,8 +9,8 @@ const registryPath = path.resolve(repoRoot, args.registry ?? "docs/specs/compat-
 const docPath = path.resolve(repoRoot, args.doc ?? "docs/content/docs/reference/compatibility.mdx");
 const checkOnly = Boolean(args.check);
 
-const startMarker = "<!-- compat-matrix:start -->";
-const endMarker = "<!-- compat-matrix:end -->";
+const startMarker = "{/* compat-matrix:start */}";
+const endMarker = "{/* compat-matrix:end */}";
 
 function parseArgs(argv) {
   const parsed = {};
@@ -86,7 +86,7 @@ function validateRegistry(registry) {
 
 function renderMatrix(registry) {
   const capabilityHeaders = registry.capabilities.map((capability) => capability.label);
-  const headers = ["Server / flags", "SDK", "Package", "Published", ...capabilityHeaders];
+  const headers = ["Server / flags", "SDK", "Package", "SDK version", ...capabilityHeaders];
   const separator = headers.map(() => "---");
   const rows = registry.sdks.map((sdk) => [
     `${sdk.serverVersion} / ${sdk.featureFlag}`,
