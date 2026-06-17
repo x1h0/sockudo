@@ -124,4 +124,4 @@ Full product parity still depends on SDK work outside this server release gate:
 | `plans/ai-transport/02-sdk-prompts.md` | P0-P16 must be complete before shipping SDKs that depend on AI Transport. Server can release first with defaults off. |
 | `plans/ai-transport/03-existing-sdks-prompts.md` E1 | Full matrix evidence must be committed as `sdk-compat-full-matrix.json` before GA. |
 | `plans/ai-transport/03-existing-sdks-prompts.md` E4/E5 | Enablement remains a dependency for full product parity, not for a server release with AI defaults off. |
-| `plans/ai-transport/03-existing-sdks-prompts.md` E6 | Release-order policy is recorded; dry-run rehearsal evidence is required before SDK publication. |
+| `plans/ai-transport/03-existing-sdks-prompts.md` E6 | Release-order policy is recorded; SDK publication still requires executed SDK compatibility evidence. |

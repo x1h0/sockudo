@@ -5,7 +5,7 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
   webServer: {
-    command: "pnpm --filter @sockudo/ai-transport-demo-nextjs-usechat dev",
+    command: "pnpm --filter @sockudo/ai-transport-demo-nuxt dev",
     url: "http://localhost:5174",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

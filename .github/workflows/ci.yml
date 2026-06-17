@@ -54,28 +54,6 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   # =============================================================================
-  # Compatibility Matrix Drift Gate
-  # =============================================================================
-  compatibility-matrix:
-    name: Compatibility Matrix Drift
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Check generated compatibility matrix
-        run: node scripts/generate-compat-matrix.mjs --check
-
-      - name: Check release-order rehearsal
-        run: node scripts/compat-release-rehearsal.mjs --check
-
-  # =============================================================================
   # Protocol SDK Compatibility Gate
   # =============================================================================
   protocol-sdk-compat:
@@ -95,23 +73,11 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git diff --name-only "$BASE_SHA"...HEAD > /tmp/sockudo-changed-files.txt
-          if grep -Eq '^(crates/sockudo-protocol/|crates/sockudo-adapter/src/handler/|crates/sockudo-adapter/src/v2_broadcast\.rs|crates/sockudo-server/src/(ws_handler\.rs|http_handler(\.rs|/)|history)|crates/sockudo-webhook/|docs/specs/ai-transport-wire-protocol\.md|docs/specs/compat-matrix\.json|docs/content/docs/reference/compatibility\.mdx|scripts/generate-compat-matrix\.mjs|scripts/compat-release-rehearsal\.mjs|tests/ai-conformance/)' /tmp/sockudo-changed-files.txt; then
+          if grep -Eq '^(crates/sockudo-protocol/|crates/sockudo-adapter/src/handler/|crates/sockudo-adapter/src/v2_broadcast\.rs|crates/sockudo-server/src/(ws_handler\.rs|http_handler(\.rs|/)|history)|crates/sockudo-webhook/|docs/specs/ai-transport-wire-protocol\.md|tests/ai-conformance/)' /tmp/sockudo-changed-files.txt; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Install Node.js
-        if: steps.protocol_changes.outputs.changed == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Check protocol release artifacts
-        if: steps.protocol_changes.outputs.changed == 'true'
-        run: |
-          node scripts/generate-compat-matrix.mjs --check
-          node scripts/compat-release-rehearsal.mjs --check
 
       - name: Install Bun
         if: steps.protocol_changes.outputs.changed == 'true'
@@ -546,7 +512,7 @@ jobs:
   manual-build-info:
     name: 🔨 Manual Build Instructions
     runs-on: ubuntu-24.04
-    needs: [lint, compatibility-matrix, test, security, ai-release-feature-matrix, ai-ga-evidence, ai-docker-feature-builds, ai-benchmark-regression, ai-conformance]
+    needs: [lint, test, security, ai-release-feature-matrix, ai-ga-evidence, ai-docker-feature-builds, ai-benchmark-regression, ai-conformance]
     steps:
       - name: Post build instructions
         uses: actions/github-script@v7

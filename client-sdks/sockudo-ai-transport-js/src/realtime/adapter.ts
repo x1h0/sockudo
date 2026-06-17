@@ -931,7 +931,7 @@ async function loadSockudoConstructor(): Promise<
   new (appKey: string, options: Record<string, unknown>) => SockudoClientPeer
 > {
   const specifier = "@sockudo/client";
-  const module = asRecord(await import(specifier));
+  const module = asRecord(await import(/* @vite-ignore */ specifier));
   if (typeof module?.default !== "function") {
     throw new ErrorInfo({
       code: ErrorCode.InvalidArgument,

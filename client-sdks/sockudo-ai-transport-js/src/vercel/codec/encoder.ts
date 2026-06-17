@@ -29,6 +29,8 @@ import type {
 } from "./events.js";
 import { headersForChunk } from "./headers.js";
 
+let generatedMessageCounter = 0;
+
 /** Creates a Vercel UIMessage encoder over Sockudo mutable-message writes. */
 export function createVercelEncoder(
   channel: ChannelWriter,
@@ -100,6 +102,11 @@ export function createVercelEncoder(
       const chunkMessageId = messageIdOfChunk(output);
       if (chunkMessageId !== undefined) {
         activeMessageId = chunkMessageId;
+      } else if (shouldStartAssistantMessage(output)) {
+        activeMessageId =
+          getTransportHeaders(writeOptions.extras)[HEADER_CODEC_MESSAGE_ID] ??
+          activeMessageId ??
+          nextGeneratedMessageId();
       }
       const optionsForOutput = outputOptions(
         output,
@@ -319,6 +326,20 @@ function inputCodecHeaders(
 
 function messageIdOfChunk(chunk: AI.UIMessageChunk): string | undefined {
   return "messageId" in chunk ? chunk.messageId : undefined;
+}
+
+function shouldStartAssistantMessage(chunk: AI.UIMessageChunk): boolean {
+  return (
+    chunk.type === "start" ||
+    chunk.type === "text-start" ||
+    chunk.type === "reasoning-start" ||
+    chunk.type === "tool-input-start"
+  );
+}
+
+function nextGeneratedMessageId(): string {
+  generatedMessageCounter += 1;
+  return `msg_${Date.now().toString(36)}_${generatedMessageCounter.toString(36)}`;
 }
 
 function isUserMessage(input: VercelInput): input is { message: AI.UIMessage } {

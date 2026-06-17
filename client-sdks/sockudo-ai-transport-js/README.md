@@ -46,16 +46,17 @@ pnpm add openai
 pnpm add @anthropic-ai/sdk
 ```
 
-## Quickstart: Vercel `useChat`
+## Quickstart: Vercel AI SDK transport
 
-The Vercel path mirrors Ably's getting-started flow with Sockudo channel auth, versioned-message
-proxying, and `streamText` in a route handler.
+The Vercel path mirrors Ably's AI Transport flow with Sockudo channel auth, versioned-message
+proxying, and `streamText` in a route handler. The Nuxt demo uses the workspace `@sockudo/client`
+package instead of the old archived GitHub mirror.
 
 ```tsx
 import { ChatTransportProvider } from "@sockudo/ai-transport/vercel/react";
 ```
 
-See `demo/nextjs-usechat` and `docs/snippets/generated.md#usechat-provider`.
+See `demo/` for the Nuxt command-center demo.
 
 ## Quickstart: Vue And Svelte
 
@@ -76,7 +77,7 @@ views without Vercel `useChat`.
 import { TransportProvider, useView } from "@sockudo/ai-transport/react";
 ```
 
-See `demo/nextjs-core-sdk` and `docs/snippets/generated.md#core-provider`.
+See `demo/` for branch-tree, history, cancellation, and raw-frame examples.
 
 ## Quickstart: Direct Providers
 
@@ -99,9 +100,7 @@ Responses, and Anthropic SDK Messages streams are adapted into Sockudo/Vercel UI
 ## Run Demos
 
 ```bash
-make demo       # Next.js useChat app + Sockudo compose
-make demo-core  # Core SDK app + Sockudo compose
-make demo-node  # Standalone Node agent + Sockudo compose
+make demo       # Nuxt AI Transport app + Sockudo compose
 ```
 
 The cold path is designed to reach a working chat in under 15 minutes on a machine with Docker, Node
@@ -121,15 +120,15 @@ The cold path is designed to reach a working chat in under 15 minutes on a machi
 
 Each entry ships ESM, UMD-for-CommonJS, and declaration files.
 
-## Compatibility Matrix
+## Support and test lanes
 
 These lanes are part of CI for the `0.1.x` release line.
 
 | Surface        | Supported range                                                      | CI evidence                                                                |
 | -------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Node.js        | 20, 22                                                               | `validate` and `integration` matrix                                        |
-| Browsers       | Last 2 evergreen families via Playwright engines                     | `browser-smoke` on Chromium, Firefox, WebKit against `demo/nextjs-usechat` |
-| React          | 18, 19                                                               | `react-compat` matrix                                                      |
+| Node.js        | 20, 22                                                               | `validate` and `integration` lanes                                         |
+| Browsers       | Last 2 evergreen families via Playwright engines                     | `browser-smoke` on Chromium, Firefox, WebKit against `demo/`               |
+| React          | 18, 19                                                               | `react-compat` lane                                                        |
 | Vue            | 3.x                                                                  | Vue composable unit tests and typed package exports                        |
 | Svelte         | 5.x                                                                  | Svelte store unit tests and typed package exports                          |
 | Vercel AI SDK  | `ai` v6                                                              | locked dev lane plus peer range `^6`                                       |

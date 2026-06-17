@@ -23,6 +23,5 @@ node scripts/ai-transport-rolling-upgrade-redis.mjs --execute \
   --postHook "./ops/rc/roll-all-nodes-to-rc-and-enable-ai.sh"
 
 node scripts/sdk-compat-full-matrix.mjs --execute
-node scripts/compat-release-rehearsal.mjs
 scripts/ai-transport-ga-gate.sh release-evidence
 ```

@@ -30,9 +30,6 @@
 - [ ] Change is additive under AI Transport wire-protocol v1
 - [ ] `docs/specs/ai-transport-wire-protocol.md` updated or confirmed unchanged
 - [ ] Golden transcripts / forward-compat fixtures updated or confirmed unchanged
-- [ ] Cross-SDK compatibility matrix registry updated or confirmed unchanged
-- [ ] `node scripts/generate-compat-matrix.mjs --check` passes
-- [ ] Release-order rehearsal updated or confirmed unchanged
 - [ ] Default Protocol V1/Pusher output remains byte-identical
 
 ## Build Artifacts

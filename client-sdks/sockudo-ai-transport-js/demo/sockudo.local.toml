@@ -33,9 +33,9 @@ driver = "memory"
 
 [app_manager.array]
 [[app_manager.array.apps]]
-id = "app-id"
-key = "app-key"
-secret = "app-secret"
+id = "demo-app"
+key = "demo-key"
+secret = "demo-secret"
 enabled = true
 
 [app_manager.array.apps.policy.limits]

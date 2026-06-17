@@ -6,9 +6,9 @@ AI Transport wire protocol. Parity status is tracked in
 
 ## Quickstarts
 
-- Vercel `useChat`: [`../demo/nextjs-usechat`](../demo/nextjs-usechat)
-- Core SDK: [`../demo/nextjs-core-sdk`](../demo/nextjs-core-sdk)
-- Standalone Node agent: [`../demo/node-agent`](../demo/node-agent)
+- Nuxt command-center demo: [`../demo`](../demo)
+- Vercel AI SDK transport: `@sockudo/ai-transport/vercel`
+- Core branch/tree API: `@sockudo/ai-transport`
 - Vue composables: `@sockudo/ai-transport/vue` and `@sockudo/ai-transport/vercel/vue`
 - Svelte stores: `@sockudo/ai-transport/svelte` and `@sockudo/ai-transport/vercel/svelte`
 - Direct providers: `@sockudo/ai-transport/providers`
@@ -43,5 +43,3 @@ Snippet references used by these docs:
 - snippet:core-provider
 - snippet:core-branch-views
 - snippet:core-route
-- snippet:node-agent-poke
-- snippet:node-agent-suspended

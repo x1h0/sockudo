@@ -40,7 +40,6 @@ check_ci_evidence() {
   require_file "docs/specs/ai-transport-ga-readiness.md"
   require_file "docs/specs/ai-transport-security-review.md"
   require_file "docs/specs/ai-transport-capacity.md"
-  require_file "docs/specs/compat-matrix.json"
   require_file "docs/content/docs/server/ai-transport-production-checklist.mdx"
   require_file "docs/content/docs/reference/compatibility.mdx"
   require_file "config/ai-transport.example.toml"
@@ -50,9 +49,6 @@ check_ci_evidence() {
   require_file "scripts/ai-transport-s14-release-evidence.sh"
   require_file "scripts/ai-transport-rolling-upgrade-redis.mjs"
   require_file "scripts/sdk-compat-full-matrix.mjs"
-  require_file "scripts/generate-compat-matrix.mjs"
-  require_file "scripts/compat-release-rehearsal.mjs"
-  require_file "docs/specs/ai-transport-results/compat-release-rehearsal.json"
 
   require_grep "Wire protocol version: 1" "docs/specs/ai-transport-wire-protocol.md"
   require_grep "Compatibility Promise" "docs/specs/ai-transport-wire-protocol.md"
@@ -60,9 +56,6 @@ check_ci_evidence() {
   require_grep "SDK plans status" "docs/specs/ai-transport-ga-readiness.md"
   require_grep "ai-transport-ga-gate.sh release-evidence" "docs/content/docs/server/ai-transport-production-checklist.mdx"
   require_grep "config/ai-transport.example.toml" "CHANGELOG.md"
-
-  node scripts/generate-compat-matrix.mjs --check
-  node scripts/compat-release-rehearsal.mjs --check
 }
 
 check_release_evidence() {
@@ -81,7 +74,6 @@ check_release_evidence() {
     docs/specs/ai-transport-results/cancel-storm.json \
     docs/specs/ai-transport-results/soak-20pct.json \
     docs/specs/ai-transport-results/rolling-upgrade-redis.json \
-    docs/specs/ai-transport-results/compat-release-rehearsal.json \
     docs/specs/ai-transport-results/sdk-compat-full-matrix.json
   do
     if [[ ! -f "$path" ]]; then
@@ -148,29 +140,6 @@ if (!Array.isArray(rolling.phases) || rolling.phases.length !== 3) {
 for (const phase of rolling.phases ?? []) {
   if (phase.status !== "passed") {
     fail(`rolling-upgrade-redis.json: phase ${phase.name} is ${phase.status}`);
-  }
-}
-
-const rehearsal = read("docs/specs/ai-transport-results/compat-release-rehearsal.json");
-if (rehearsal.schema !== "sockudo.compatibility.release-rehearsal.v1") {
-  fail("compat-release-rehearsal.json: invalid schema");
-}
-if (rehearsal.status !== "passed") {
-  fail(`compat-release-rehearsal.json: status must be passed, got ${rehearsal.status}`);
-}
-const expectedReleaseOrder = [
-  "server-defaults-off",
-  "sockudo-js",
-  "sockudo-ai-transport",
-  "other-client-sdks",
-  "server-http-sdks",
-];
-if (JSON.stringify(rehearsal.releaseOrder) !== JSON.stringify(expectedReleaseOrder)) {
-  fail("compat-release-rehearsal.json: release order changed");
-}
-for (const step of rehearsal.steps ?? []) {
-  if (step.status !== "passed") {
-    fail(`compat-release-rehearsal.json: step ${step.id} is ${step.status}`);
   }
 }
 

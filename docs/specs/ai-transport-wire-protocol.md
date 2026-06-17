@@ -14,7 +14,7 @@ AI event names, `extras.ai.transport` key registry, error codes, publish/mutatio
 fields, `channel_history` request/response shape, capability-token claims, or V1 Pusher delivery
 stripping rules documented here without a new wire-protocol version and matching SDK major-release
 plan. New fields may be added only when they are optional, ignored safely by existing SDKs, and
-covered by the cross-SDK compatibility matrix.
+covered by conformance fixtures, SDK checks, or release evidence for the affected surface.
 
 ## Part A: Audited Existing Behavior
 

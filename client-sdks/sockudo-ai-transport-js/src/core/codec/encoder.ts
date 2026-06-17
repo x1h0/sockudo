@@ -252,10 +252,19 @@ async function doTerminalStream(
   });
   const terminal = state.tail
     .catch(() => undefined)
-    .then(() => updateWithError(input.writer, state.serial, mutation));
+    .then(() =>
+      updateWithError(input.writer, state.serial, {
+        ...mutation,
+        data: state.accumulated,
+      }),
+    );
   state.tail = terminal.catch(() => undefined);
   state.pending.push(terminal);
   const results = await Promise.allSettled(state.pending);
+  const terminalResult = results.at(-1);
+  if (terminalResult?.status === "fulfilled") {
+    return;
+  }
   if (!results.some((result) => result.status === "rejected")) {
     return;
   }

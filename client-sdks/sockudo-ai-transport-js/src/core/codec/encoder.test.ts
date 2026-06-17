@@ -58,6 +58,12 @@ describe("encoder core", () => {
     expect(createHeaders[HEADER_STREAM_ID]).toBe("stream-1");
     expect(writer.appends).toHaveLength(1);
     expect(writer.updates).toHaveLength(1);
+    expect(writer.updates[0]).toMatchObject({
+      messageSerial: "msg-1",
+      options: {
+        data: "ab",
+      },
+    });
     expect(
       getTransportHeaders(writer.appends.at(0)?.options.extras)["turn-id"],
     ).toBe("turn-1");
@@ -108,15 +114,15 @@ describe("encoder core", () => {
     encoder.appendStream("stream-1", "c");
     await encoder.closeStream("stream-1");
 
-    expect(writer.updates).toHaveLength(2);
-    expect(writer.updates[1]).toMatchObject({
+    expect(writer.updates).toHaveLength(1);
+    expect(writer.updates[0]).toMatchObject({
       messageSerial: "msg-1",
       options: {
         data: "abc",
       },
     });
     expect(
-      getTransportHeaders(writer.updates[1]?.options.extras)[HEADER_STATUS],
+      getTransportHeaders(writer.updates[0]?.options.extras)[HEADER_STATUS],
     ).toBe("complete");
   });
 

@@ -9,8 +9,5 @@ crates/sockudo-server/src/history* @radudiaconu
 crates/sockudo-server/src/main.rs @radudiaconu
 crates/sockudo-webhook/** @radudiaconu
 docs/specs/ai-transport-wire-protocol.md @radudiaconu
-docs/specs/compat-matrix.json @radudiaconu
 docs/content/docs/reference/compatibility.mdx @radudiaconu
-scripts/generate-compat-matrix.mjs @radudiaconu
-scripts/compat-release-rehearsal.mjs @radudiaconu
 tests/ai-conformance/** @radudiaconu

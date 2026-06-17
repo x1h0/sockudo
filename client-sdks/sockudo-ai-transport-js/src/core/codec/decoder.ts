@@ -2,6 +2,7 @@ import {
   HEADER_CODEC_MESSAGE_ID,
   HEADER_STATUS,
   HEADER_STREAM,
+  HEADER_STREAM_ID,
 } from "../../constants.js";
 import type { HeaderMap } from "../../utils.js";
 import type { InboundMessage } from "../../realtime/types.js";
@@ -91,6 +92,7 @@ export function createDecoderCore<TEvent>(
       const messageId = codecMessageId(message);
       const transport = message.getTransportHeaders();
       const stream = transport[HEADER_STREAM] === "true";
+      const trackerId = stream ? streamTrackerId(message, messageId) : messageId;
       switch (message.action) {
         case "create":
           if (!stream) {
@@ -101,6 +103,7 @@ export function createDecoderCore<TEvent>(
             hooks,
             options,
             maxStreams,
+            trackerId,
             messageId,
             message,
             false,
@@ -111,19 +114,27 @@ export function createDecoderCore<TEvent>(
             hooks,
             options,
             maxStreams,
+            trackerId,
             messageId,
             message,
             dataAsString(message.data),
           );
         case "update":
           if (typeof message.data !== "string") {
-            return metadataUpdate(trackers, hooks, options, messageId, message);
+            return metadataUpdate(
+              trackers,
+              hooks,
+              options,
+              trackerId,
+              message,
+            );
           }
           return updateOrFirstContact(
             trackers,
             hooks,
             options,
             maxStreams,
+            trackerId,
             messageId,
             message,
             dataAsString(message.data),
@@ -144,14 +155,14 @@ function metadataUpdate<TEvent>(
   trackers: Map<string, MutableTracker>,
   hooks: DecoderCoreHooks<TEvent>,
   options: DecoderCoreOptions,
-  messageId: string,
+  trackerId: string,
   message: InboundMessage,
 ): DecodedEvent<TEvent>[] {
-  const tracker = trackers.get(messageId);
+  const tracker = trackers.get(trackerId);
   if (!tracker) {
     return [];
   }
-  touch(trackers, messageId, tracker);
+  touch(trackers, trackerId, tracker);
   tracker.message = message;
   return isTerminal(message)
     ? closeTracker(trackers, hooks, options, tracker, message)
@@ -159,6 +170,7 @@ function metadataUpdate<TEvent>(
 }
 
 interface MutableTracker extends DecoderStreamTracker {
+  trackerId: string;
   closed: boolean;
 }
 
@@ -167,19 +179,21 @@ function createTracker<TEvent>(
   hooks: DecoderCoreHooks<TEvent>,
   options: DecoderCoreOptions,
   maxStreams: number,
+  trackerId: string,
   messageId: string,
   message: InboundMessage,
   firstContact: boolean,
   closeIfTerminal = true,
 ): DecodedEvent<TEvent>[] {
   const tracker: MutableTracker = {
+    trackerId,
     messageId,
     accumulated: dataAsString(message.data),
     firstContact,
     message,
     closed: false,
   };
-  trackers.set(messageId, tracker);
+  trackers.set(trackerId, tracker);
   enforceLimit(trackers, maxStreams, options);
   const events = hooks.buildStartEvents(tracker);
   if (closeIfTerminal && isTerminal(message)) {
@@ -193,11 +207,12 @@ function appendOrFirstContact<TEvent>(
   hooks: DecoderCoreHooks<TEvent>,
   options: DecoderCoreOptions,
   maxStreams: number,
+  trackerId: string,
   messageId: string,
   message: InboundMessage,
   delta: string,
 ): DecodedEvent<TEvent>[] {
-  const tracker = trackers.get(messageId);
+  const tracker = trackers.get(trackerId);
   if (!tracker) {
     options.onFirstContact?.(messageId);
     const events = createTracker(
@@ -205,12 +220,13 @@ function appendOrFirstContact<TEvent>(
       hooks,
       options,
       maxStreams,
+      trackerId,
       messageId,
       { ...message, data: "" },
       true,
       false,
     );
-    const created = trackers.get(messageId);
+    const created = trackers.get(trackerId);
     if (!created) {
       return events;
     }
@@ -222,7 +238,7 @@ function appendOrFirstContact<TEvent>(
     }
     return events;
   }
-  touch(trackers, messageId, tracker);
+  touch(trackers, trackerId, tracker);
   tracker.message = message;
   tracker.accumulated += delta;
   const events = hooks.buildDeltaEvents(tracker, delta);
@@ -237,17 +253,19 @@ function appendAggregateOrDeltaOrFirstContact<TEvent>(
   hooks: DecoderCoreHooks<TEvent>,
   options: DecoderCoreOptions,
   maxStreams: number,
+  trackerId: string,
   messageId: string,
   message: InboundMessage,
   data: string,
 ): DecodedEvent<TEvent>[] {
-  const tracker = trackers.get(messageId);
+  const tracker = trackers.get(trackerId);
   if (!tracker || data.startsWith(tracker.accumulated)) {
     return updateOrFirstContact(
       trackers,
       hooks,
       options,
       maxStreams,
+      trackerId,
       messageId,
       message,
       data,
@@ -258,6 +276,7 @@ function appendAggregateOrDeltaOrFirstContact<TEvent>(
     hooks,
     options,
     maxStreams,
+    trackerId,
     messageId,
     message,
     data,
@@ -269,11 +288,12 @@ function updateOrFirstContact<TEvent>(
   hooks: DecoderCoreHooks<TEvent>,
   options: DecoderCoreOptions,
   maxStreams: number,
+  trackerId: string,
   messageId: string,
   message: InboundMessage,
   nextAccumulated: string,
 ): DecodedEvent<TEvent>[] {
-  const tracker = trackers.get(messageId);
+  const tracker = trackers.get(trackerId);
   if (!tracker) {
     options.onFirstContact?.(messageId);
     const events = createTracker(
@@ -281,12 +301,13 @@ function updateOrFirstContact<TEvent>(
       hooks,
       options,
       maxStreams,
+      trackerId,
       messageId,
       { ...message, data: "" },
       true,
       false,
     );
-    const created = trackers.get(messageId);
+    const created = trackers.get(trackerId);
     if (!created) {
       return events;
     }
@@ -298,7 +319,7 @@ function updateOrFirstContact<TEvent>(
     }
     return events;
   }
-  touch(trackers, messageId, tracker);
+  touch(trackers, trackerId, tracker);
   tracker.message = message;
   const previous = tracker.accumulated;
   if (nextAccumulated.startsWith(previous)) {
@@ -327,9 +348,11 @@ function deleteTracker<TEvent>(
   messageId: string,
   message: InboundMessage,
 ): DecodedEvent<TEvent>[] {
+  const trackerId = streamTrackerId(message, messageId);
   const tracker =
-    trackers.get(messageId) ??
+    trackers.get(trackerId) ??
     ({
+      trackerId,
       messageId,
       accumulated: dataAsString(message.data),
       firstContact: true,
@@ -338,7 +361,7 @@ function deleteTracker<TEvent>(
     } satisfies MutableTracker);
   tracker.message = message;
   const events = hooks.buildDeleteEvents?.(tracker) ?? [];
-  trackers.delete(messageId);
+  trackers.delete(trackerId);
   options.onTrackerClosed?.(messageId);
   return events;
 }
@@ -355,7 +378,7 @@ function closeTracker<TEvent>(
   }
   tracker.closed = true;
   const events = hooks.buildEndEvents(tracker, message.getCodecHeaders());
-  trackers.delete(tracker.messageId);
+  trackers.delete(tracker.trackerId);
   options.onTrackerClosed?.(tracker.messageId);
   return events;
 }
@@ -389,6 +412,10 @@ function codecMessageId(message: InboundMessage): string {
     message.getTransportHeaders()[HEADER_CODEC_MESSAGE_ID] ??
     message.messageSerial
   );
+}
+
+function streamTrackerId(message: InboundMessage, messageId: string): string {
+  return message.getTransportHeaders()[HEADER_STREAM_ID] ?? messageId;
 }
 
 function isTerminal(message: InboundMessage): boolean {

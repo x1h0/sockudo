@@ -5,6 +5,7 @@ import {
   HEADER_CODEC_MESSAGE_ID,
   HEADER_STATUS,
   HEADER_STREAM,
+  HEADER_STREAM_ID,
 } from "../../constants.js";
 import { createDecoderCore } from "./decoder.js";
 import type { DecoderCoreHooks } from "./decoder.js";
@@ -163,6 +164,53 @@ describe("decoder core", () => {
         }),
       ),
     ).toEqual([event("end:hello", "msg-1", 2)]);
+  });
+
+  it("tracks concurrent streams independently under one codec message id", () => {
+    const decoder = createDecoderCore(hooks());
+    const common = {
+      [HEADER_CODEC_MESSAGE_ID]: "assistant-1",
+      [HEADER_STREAM]: "true",
+    };
+
+    expect(
+      decoder.decode(
+        message({
+          action: "update",
+          data: " thinking",
+          messageSerial: "assistant-1",
+          transport: {
+            ...common,
+            [HEADER_STREAM_ID]: "reasoning:1",
+            [HEADER_STATUS]: "complete",
+          },
+        }),
+      ),
+    ).toEqual([
+      event("start:first:", "assistant-1", 1),
+      event("delta: thinking: thinking", "assistant-1", 1),
+      event("end: thinking", "assistant-1", 1),
+    ]);
+
+    expect(
+      decoder.decode(
+        message({
+          action: "update",
+          data: " answer",
+          messageSerial: "assistant-1",
+          serial: 2,
+          transport: {
+            ...common,
+            [HEADER_STREAM_ID]: "text:1",
+            [HEADER_STATUS]: "complete",
+          },
+        }),
+      ),
+    ).toEqual([
+      event("start:first:", "assistant-1", 2),
+      event("delta: answer: answer", "assistant-1", 2),
+      event("end: answer", "assistant-1", 2),
+    ]);
   });
 
   it("emits replacement resync events for non-prefix updates", () => {

@@ -10,7 +10,7 @@ const snippetEnd = /^\s*\/\/\s*@docs-snippet-end\s*$/u;
 const snippets = new Map();
 for (const file of await listFiles(join(root, "demo"))) {
   if (
-    !/\.(?:ts|tsx|js|mjs)$/u.test(file) ||
+    !/\.(?:ts|tsx|js|mjs|vue)$/u.test(file) ||
     file.includes("node_modules") ||
     file.includes(`${sep}.next${sep}`) ||
     file.includes(`${sep}dist${sep}`)
@@ -90,7 +90,11 @@ function renderGenerated(map) {
   for (const [id, snippet] of [...map.entries()].sort(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    const language = snippet.file.endsWith(".tsx") ? "tsx" : "ts";
+    const language = snippet.file.endsWith(".tsx")
+      ? "tsx"
+      : snippet.file.endsWith(".vue")
+        ? "vue"
+        : "ts";
     chunks.push(
       "",
       `## ${id}`,

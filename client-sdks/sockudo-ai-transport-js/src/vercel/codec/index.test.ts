@@ -824,6 +824,47 @@ describe("UIMessageCodec", () => {
       { type: "text", id: "text", text: "Hello" },
     ]);
   });
+
+  it("generates one assistant message id for Gateway chunks without message ids", async () => {
+    const writer = createWriter();
+    const encoder = UIMessageCodec.createEncoder(writer);
+    const decoder = UIMessageCodec.createDecoder();
+
+    await encoder.publishOutput({ type: "start" });
+    await encoder.publishOutput({ type: "text-start", id: "text" });
+    await encoder.publishOutput({
+      type: "text-delta",
+      id: "text",
+      delta: "Eight",
+    });
+    await encoder.publishOutput({ type: "text-end", id: "text" });
+    await encoder.publishOutput({ type: "finish", finishReason: "stop" });
+
+    const projection = createVercelProjection();
+    let publishCount = 0;
+    writer.writes.forEach((write, index) => {
+      if (write.kind === "publish") {
+        publishCount += 1;
+      }
+      const message =
+        write.kind === "publish"
+          ? rawFromPublish(write.message, `msg-${String(publishCount)}`)
+          : write.kind === "append"
+            ? rawFromAppend(write, "append", index + 1)
+            : rawFromUpdate(write, index + 1);
+      const decoded = decoder.decode(message);
+      [...decoded.inputs, ...decoded.outputs].forEach((event) => {
+        foldVercelEvent(projection, event.event, event.meta);
+      });
+    });
+
+    const messages = UIMessageCodec.getMessages(projection);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toMatch(/^msg_/);
+    expect(messages[0]?.parts).toEqual([
+      { type: "text", id: "text", text: "Eight" },
+    ]);
+  });
 });
 
 interface TestWriter extends ChannelWriter {

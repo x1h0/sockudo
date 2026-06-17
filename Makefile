@@ -358,22 +358,6 @@ ai-rolling-upgrade-evidence: ## Record shared-Redis rolling-upgrade evidence (pa
 sdk-compat-full-matrix: ## Record full SDK compatibility matrix (pass ARGS="--execute" to run)
 	@node scripts/sdk-compat-full-matrix.mjs $(ARGS)
 
-.PHONY: compat-matrix
-compat-matrix: ## Regenerate the SDK compatibility matrix from docs/specs/compat-matrix.json
-	@node scripts/generate-compat-matrix.mjs
-
-.PHONY: compat-matrix-check
-compat-matrix-check: ## Check that the generated SDK compatibility matrix is current
-	@node scripts/generate-compat-matrix.mjs --check
-
-.PHONY: compat-release-rehearsal
-compat-release-rehearsal: ## Record the dry-run release-order rehearsal artifact
-	@node scripts/compat-release-rehearsal.mjs
-
-.PHONY: compat-release-rehearsal-check
-compat-release-rehearsal-check: ## Check the dry-run release-order rehearsal artifact
-	@node scripts/compat-release-rehearsal.mjs --check
-
 .PHONY: ai-ga-matrix
 ai-ga-matrix: ## Run AI Transport release feature matrix locally
 	@scripts/ai-transport-ga-gate.sh matrix
