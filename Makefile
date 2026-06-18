@@ -181,7 +181,7 @@ sentinel-tls-up: ## Start the opt-in Redis Sentinel + TLS test fixture
 	@echo "$(BLUE)Generating Sentinel TLS test certificates...$(RESET)"
 	@tests/sentinel-tls/generate-certs.sh
 	@echo "$(BLUE)Starting Redis Sentinel + TLS fixture...$(RESET)"
-	@docker compose -f docker-compose.test.yml --profile sentinel-tls up -d
+	@docker-compose -f docker-compose.test.yml --profile sentinel-tls up -d
 	@echo "$(GREEN)Sentinel fixture up. Sentinels (TLS): localhost:26379-26381$(RESET)"
 	@echo "$(YELLOW)If the master hop cannot be resolved from the host, add$(RESET)"
 	@echo "$(YELLOW)  127.0.0.1 host.docker.internal$(RESET)"
@@ -190,7 +190,7 @@ sentinel-tls-up: ## Start the opt-in Redis Sentinel + TLS test fixture
 .PHONY: sentinel-tls-down
 sentinel-tls-down: ## Stop the Redis Sentinel + TLS test fixture
 	@echo "$(BLUE)Stopping Redis Sentinel + TLS fixture...$(RESET)"
-	@docker compose -f docker-compose.test.yml --profile sentinel-tls down -v
+	@docker-compose -f docker-compose.test.yml --profile sentinel-tls down -v
 
 .PHONY: sentinel-tls-test
 sentinel-tls-test: ## Run the gated live Sentinel TLS integration tests against the fixture

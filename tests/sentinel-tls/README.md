@@ -5,6 +5,9 @@ TLS and mutual TLS (client certificates). It is not part of the default test run
 or CI: the compose services live behind the `sentinel-tls` profile, and the
 integration tests are `#[ignore]`d (matching `sockudo-rate-limiter/tests/redis_limiter_live.rs`).
 
+> Commands below use `docker-compose` (v1, hyphen) to match the repo's Makefile.
+> If you only have the Compose v2 plugin, substitute `docker compose`.
+
 ## What it provides
 
 - `redis-master-tls` — a TLS-only Redis master (`tls-auth-clients yes`, password `masterpass`).

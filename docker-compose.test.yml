@@ -188,10 +188,10 @@ services:
   # ===========================================================================
   # Opt-in Redis Sentinel + TLS fixture (profile: sentinel-tls)
   # ---------------------------------------------------------------------------
-  # NOT started by the default `docker compose -f docker-compose.test.yml up -d`
+  # NOT started by the default `docker-compose -f docker-compose.test.yml up -d`
   # (it has a profile), so CI is unaffected. To use it:
   #   1. tests/sentinel-tls/generate-certs.sh
-  #   2. docker compose -f docker-compose.test.yml --profile sentinel-tls up -d
+  #   2. docker-compose -f docker-compose.test.yml --profile sentinel-tls up -d
   # See tests/sentinel-tls/README.md and the `redis_sentinel_live` test.
   # ===========================================================================
   redis-master-tls:
