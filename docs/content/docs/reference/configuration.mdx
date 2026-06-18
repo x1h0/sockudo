@@ -33,6 +33,53 @@ For deployment overrides and secrets, use the complete [environment variable ref
 | `[queue]` | Webhook and push background work. |
 | `[rate_limiter]` | Request, connection, event, and push limits. |
 
+## Redis Sentinel and TLS
+
+`[database.redis]` configures the Redis connection used by the Redis adapter, cache, queue, and rate limiter. When `sentinels` is non-empty, Sockudo connects through Redis Sentinel using a native Sentinel client (rather than a direct URL) and can secure both connection hops independently.
+
+| Key | Purpose |
+| --- | --- |
+| `sentinels` | List of `{ host, port }` Sentinel nodes. A non-empty list enables Sentinel mode. |
+| `name` | Monitored master (Sentinel service) name. |
+| `username` / `password` | Auth for the master/replica data connection. |
+| `sentinel_username` / `sentinel_password` | Auth for the Sentinel control connection. |
+| `[database.redis.sentinel_tls]` | TLS for the client→Sentinel control connection. |
+| `[database.redis.master_tls]` | TLS for the client→master/replica data connection. |
+
+Each TLS block accepts `enabled`, `accept_invalid_certs` (skips verification; dangerous), `ca_path` (PEM CA for private CAs), and `client_cert_path` + `client_key_path` (PEM pair for mutual TLS / client-certificate auth).
+
+```toml
+[database.redis]
+name = "mymaster"
+db = 0
+username = "appuser"
+password = "app-secret"
+sentinel_username = "sentineluser"
+sentinel_password = "sentinel-secret"
+
+[[database.redis.sentinels]]
+host = "sentinel-1.internal"
+port = 26379
+
+[[database.redis.sentinels]]
+host = "sentinel-2.internal"
+port = 26379
+
+[database.redis.sentinel_tls]
+enabled = true
+ca_path = "/etc/sockudo/tls/ca.pem"
+client_cert_path = "/etc/sockudo/tls/client.pem"
+client_key_path = "/etc/sockudo/tls/client.key"
+
+[database.redis.master_tls]
+enabled = true
+ca_path = "/etc/sockudo/tls/ca.pem"
+client_cert_path = "/etc/sockudo/tls/client.pem"
+client_key_path = "/etc/sockudo/tls/client.key"
+```
+
+> **Note:** Sentinel TLS currently secures the horizontal Redis **adapter** (pub/sub) path. A `redis_pub_options.url` override, if set, takes precedence and uses the standalone connection path instead.
+
 ## Protocol features
 
 | Section | Purpose |

@@ -1,10 +1,12 @@
 use crate::horizontal_adapter::{BroadcastMessage, RequestBody, ResponseBody};
 use crate::horizontal_transport::{HorizontalTransport, TransportConfig, TransportHandlers};
+use crate::transports::redis_client::RedisClient;
 use async_trait::async_trait;
 use futures::StreamExt;
 use redis::AsyncCommands;
 use sockudo_core::error::{Error, Result};
 use sockudo_core::metrics::MetricsInterface;
+use sockudo_core::options::SentinelSpec;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -19,6 +21,9 @@ pub struct RedisAdapterConfig {
     pub prefix: String,
     pub request_timeout_ms: u64,
     pub cluster_mode: bool,
+    /// When set, connect via Redis Sentinel (with optional TLS / client certs)
+    /// instead of opening `url` directly. `url` is then used only for diagnostics.
+    pub sentinel: Option<SentinelSpec>,
 }
 
 impl Default for RedisAdapterConfig {
@@ -28,6 +33,7 @@ impl Default for RedisAdapterConfig {
             prefix: "sockudo".to_string(),
             request_timeout_ms: 5000,
             cluster_mode: false,
+            sentinel: None,
         }
     }
 }
@@ -44,9 +50,7 @@ impl TransportConfig for RedisAdapterConfig {
 
 /// Redis transport implementation
 pub struct RedisTransport {
-    client: redis::Client,
-    connection: redis::aio::ConnectionManager,
-    events_connection: redis::aio::ConnectionManager,
+    client: RedisClient,
     broadcast_channel: String,
     request_channel: String,
     response_channel: String,
@@ -63,29 +67,9 @@ impl HorizontalTransport for RedisTransport {
     type Config = RedisAdapterConfig;
 
     async fn new(config: Self::Config) -> Result<Self> {
-        let client = redis::Client::open(&*config.url)
-            .map_err(|e| Error::Redis(format!("Failed to create Redis client: {e}")))?;
-
-        // Use ConnectionManager consistently for auto-reconnection
-        let connection_manager_config = redis::aio::ConnectionManagerConfig::new()
-            .set_number_of_retries(5)
-            .set_exponent_base(2.0)
-            .set_max_delay(std::time::Duration::from_millis(5000));
-
-        let connection = client
-            .get_connection_manager_with_config(connection_manager_config.clone())
-            .await
-            .map_err(|e| Error::Redis(format!("Failed to connect to Redis: {e}")))?;
-
-        // Create ConnectionManager for events API broadcasts (reuse same config)
-        let events_connection = client
-            .get_connection_manager_with_config(connection_manager_config)
-            .await
-            .map_err(|e| {
-                Error::Redis(format!(
-                    "Failed to create Redis connection manager for events: {e}"
-                ))
-            })?;
+        // Standalone opens `url`; Sentinel builds a native Sentinel client (with TLS
+        // and optional client certs) and resolves the current master.
+        let client = RedisClient::connect(&config.url, config.sentinel.clone()).await?;
 
         let broadcast_channel = format!("{}:#broadcast", config.prefix);
         let request_channel = format!("{}:#requests", config.prefix);
@@ -94,8 +78,6 @@ impl HorizontalTransport for RedisTransport {
 
         Ok(Self {
             client,
-            connection,
-            events_connection,
             broadcast_channel,
             request_channel,
             response_channel,
@@ -117,7 +99,28 @@ impl HorizontalTransport for RedisTransport {
         const MAX_RETRY_DELAY: u64 = 1000; // Max 1 second
 
         for attempt in 0..=MAX_RETRIES {
-            let mut conn = self.events_connection.clone();
+            let mut conn = match self.client.events_connection().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    self.client.invalidate();
+                    if attempt == MAX_RETRIES {
+                        return Err(Error::Redis(format!(
+                            "Failed to acquire broadcast connection after {} attempts: {}",
+                            MAX_RETRIES + 1,
+                            e
+                        )));
+                    }
+                    warn!(
+                        "Broadcast connection attempt {} failed: {}, retrying in {}ms",
+                        attempt + 1,
+                        e,
+                        retry_delay
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_millis(retry_delay)).await;
+                    retry_delay = std::cmp::min(retry_delay * 2, MAX_RETRY_DELAY);
+                    continue;
+                }
+            };
             match conn
                 .publish::<_, _, i32>(&self.broadcast_channel, &broadcast_json)
                 .await
@@ -129,6 +132,8 @@ impl HorizontalTransport for RedisTransport {
                     return Ok(());
                 }
                 Err(e) => {
+                    // Drop cached connections so Sentinel re-resolves the master on retry.
+                    self.client.invalidate();
                     if attempt == MAX_RETRIES {
                         return Err(Error::Redis(format!(
                             "Failed to publish broadcast after {} attempts: {}",
@@ -159,11 +164,14 @@ impl HorizontalTransport for RedisTransport {
         let request_json = sonic_rs::to_string(request)
             .map_err(|e| Error::Other(format!("Failed to serialize request: {e}")))?;
 
-        let mut conn = self.connection.clone();
-        let subscriber_count: i32 = conn
-            .publish(&self.request_channel, &request_json)
-            .await
-            .map_err(|e| Error::Redis(format!("Failed to publish request: {e}")))?;
+        let mut conn = self.client.command_connection().await?;
+        let subscriber_count: i32 = match conn.publish(&self.request_channel, &request_json).await {
+            Ok(count) => count,
+            Err(e) => {
+                self.client.invalidate();
+                return Err(Error::Redis(format!("Failed to publish request: {e}")));
+            }
+        };
 
         debug!(
             "Broadcasted request {} to {} subscribers",
@@ -176,11 +184,14 @@ impl HorizontalTransport for RedisTransport {
         let response_json = sonic_rs::to_string(response)
             .map_err(|e| Error::Other(format!("Failed to serialize response: {e}")))?;
 
-        let mut conn = self.connection.clone();
-        let _: () = conn
-            .publish(&self.response_channel, response_json)
+        let mut conn = self.client.command_connection().await?;
+        if let Err(e) = conn
+            .publish::<_, _, ()>(&self.response_channel, response_json)
             .await
-            .map_err(|e| Error::Redis(format!("Failed to publish response: {e}")))?;
+        {
+            self.client.invalidate();
+            return Err(Error::Redis(format!("Failed to publish response: {e}")));
+        }
 
         Ok(())
     }
@@ -207,13 +218,16 @@ impl HorizontalTransport for RedisTransport {
         let target_channel = format!("{}:#node:{}", self.prefix, target_node_id);
         let request_json = sonic_rs::to_string(request)
             .map_err(|e| Error::Other(format!("Failed to serialize request: {e}")))?;
-        let mut conn = self.connection.clone();
-        let _: i32 = conn
-            .publish(&target_channel, &request_json)
-            .await
-            .map_err(|e| {
-                Error::Redis(format!("Failed to publish to node {target_node_id}: {e}"))
-            })?;
+        let mut conn = self.client.command_connection().await?;
+        let _: i32 = match conn.publish(&target_channel, &request_json).await {
+            Ok(count) => count,
+            Err(e) => {
+                self.client.invalidate();
+                return Err(Error::Redis(format!(
+                    "Failed to publish to node {target_node_id}: {e}"
+                )));
+            }
+        };
         debug!(
             "Published request {} to node {} via Redis",
             request.request_id, target_node_id
@@ -223,7 +237,7 @@ impl HorizontalTransport for RedisTransport {
 
     async fn start_listeners(&self, handlers: TransportHandlers) -> Result<()> {
         let sub_client = self.client.clone();
-        let pub_connection = self.connection.clone();
+        let pub_client = self.client.clone();
         let broadcast_channel = self.broadcast_channel.clone();
         let request_channel = self.request_channel.clone();
         let response_channel = self.response_channel.clone();
@@ -243,13 +257,16 @@ impl HorizontalTransport for RedisTransport {
                 }
                 debug!("Attempting to establish pub/sub connection...");
 
-                let mut pubsub = match sub_client.get_async_pubsub().await {
+                // For Sentinel, this re-resolves the current master each reconnect,
+                // which is how the listener follows master failover.
+                let mut pubsub = match sub_client.pubsub().await {
                     Ok(pubsub) => {
                         retry_delay = 500; // Reset retry delay on success
                         debug!("Pub/sub connection established successfully");
                         pubsub
                     }
                     Err(e) => {
+                        sub_client.invalidate();
                         error!(
                             "Failed to get pubsub connection: {}, retrying in {}ms",
                             e, retry_delay
@@ -329,7 +346,7 @@ impl HorizontalTransport for RedisTransport {
                             || channel == node_channel.as_str()
                         {
                             let request_handler = handlers.on_request.clone();
-                            let pub_connection_clone = pub_connection.clone();
+                            let pub_client_clone = pub_client.clone();
                             let response_channel_clone = response_channel.clone();
                             let metrics_clone = metrics.clone();
 
@@ -343,9 +360,24 @@ impl HorizontalTransport for RedisTransport {
                                     {
                                         let target =
                                             reply_to.unwrap_or(response_channel_clone.clone());
-                                        let mut conn = pub_connection_clone.clone();
-                                        let _ =
-                                            conn.publish::<_, _, ()>(&target, response_json).await;
+                                        match pub_client_clone.command_connection().await {
+                                            Ok(mut conn) => {
+                                                if conn
+                                                    .publish::<_, _, ()>(&target, response_json)
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    pub_client_clone.invalidate();
+                                                }
+                                            }
+                                            Err(e) => {
+                                                pub_client_clone.invalidate();
+                                                warn!(
+                                                    "Failed to acquire connection to publish response: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
                                     }
                                 } else if let Some(metrics) = metrics_clone.get() {
                                     metrics.mark_horizontal_transport_message_dropped("redis");
@@ -408,7 +440,13 @@ impl HorizontalTransport for RedisTransport {
     }
 
     async fn get_node_count(&self) -> Result<usize> {
-        let mut conn = self.connection.clone();
+        let mut conn = match self.client.command_connection().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                warn!("Failed to acquire connection for node count: {}", e);
+                return Ok(1);
+            }
+        };
         let result: redis::RedisResult<Vec<redis::Value>> = redis::cmd("PUBSUB")
             .arg("NUMSUB")
             .arg(&self.request_channel)
@@ -447,11 +485,7 @@ impl HorizontalTransport for RedisTransport {
 
     async fn check_health(&self) -> Result<()> {
         // Use a dedicated connection for health check to avoid impacting main operations
-        let mut conn = self
-            .client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| Error::Redis(format!("Failed to acquire health check connection: {e}")))?;
+        let mut conn = self.client.multiplexed().await?;
 
         let response = redis::cmd("PING")
             .query_async::<String>(&mut conn)
@@ -486,8 +520,6 @@ impl Clone for RedisTransport {
         self.owner_count.fetch_add(1, Ordering::Relaxed);
         Self {
             client: self.client.clone(),
-            connection: self.connection.clone(),
-            events_connection: self.events_connection.clone(),
             broadcast_channel: self.broadcast_channel.clone(),
             request_channel: self.request_channel.clone(),
             response_channel: self.response_channel.clone(),

@@ -12,7 +12,17 @@ pub struct RedisConnection {
     pub key_prefix: String,
     pub sentinels: Vec<RedisSentinel>,
     pub sentinel_password: Option<String>,
+    /// Optional ACL username for authenticating to the Sentinel nodes themselves.
+    pub sentinel_username: Option<String>,
     pub name: String,
+    /// TLS settings for the control-plane connection to the Sentinel nodes.
+    ///
+    /// Only consulted when [`RedisConnection::sentinels`] is non-empty.
+    pub sentinel_tls: RedisTlsOptions,
+    /// TLS settings for the data-plane connection to the master/replica resolved via Sentinel.
+    ///
+    /// Only consulted when [`RedisConnection::sentinels`] is non-empty.
+    pub master_tls: RedisTlsOptions,
     pub cluster: RedisClusterConnection,
     /// Legacy field kept for backward compatibility. Prefer `database.redis.cluster.nodes`.
     pub cluster_nodes: Vec<ClusterNode>,
@@ -23,6 +33,93 @@ pub struct RedisConnection {
 pub struct RedisSentinel {
     pub host: String,
     pub port: u16,
+}
+
+/// TLS configuration for a Redis connection hop (Sentinel control plane or
+/// the master/replica data plane).
+///
+/// When [`RedisTlsOptions::enabled`] is `false` the connection stays plaintext,
+/// preserving prior behavior. When enabled, the connection uses rustls; a private
+/// CA and/or a client certificate (mutual TLS) can be supplied via PEM file paths.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RedisTlsOptions {
+    /// Enable TLS for this connection hop.
+    pub enabled: bool,
+    /// Skip certificate and hostname verification.
+    ///
+    /// Maps to redis `TlsMode::Insecure`. This is dangerous and should only be
+    /// used for local testing against self-signed certificates.
+    #[serde(alias = "acceptInvalidCerts")]
+    pub accept_invalid_certs: bool,
+    /// Path to a PEM-encoded CA certificate to trust, for private/internal CAs.
+    ///
+    /// When unset the system/webpki root store is used.
+    pub ca_path: Option<String>,
+    /// Path to a PEM-encoded client certificate, for mutual TLS (client-cert auth).
+    ///
+    /// Must be paired with [`RedisTlsOptions::client_key_path`].
+    pub client_cert_path: Option<String>,
+    /// Path to a PEM-encoded client private key, for mutual TLS (client-cert auth).
+    ///
+    /// Must be paired with [`RedisTlsOptions::client_cert_path`].
+    pub client_key_path: Option<String>,
+}
+
+impl RedisTlsOptions {
+    /// Returns `true` when a client certificate/key pair is configured for mutual TLS.
+    #[must_use]
+    pub fn has_client_cert(&self) -> bool {
+        self.client_cert_path.is_some() && self.client_key_path.is_some()
+    }
+}
+
+/// Plain-data description of how to reach a Sentinel-managed Redis deployment,
+/// derived from [`RedisConnection`]. Consumed by connection backends (e.g. the
+/// horizontal adapter) to build a Sentinel client with TLS/auth applied to both
+/// the client→sentinel and client→master hops.
+#[derive(Clone)]
+pub struct SentinelSpec {
+    /// Sentinel node addresses as `(host, port)` pairs.
+    pub hosts: Vec<(String, u16)>,
+    /// Name of the monitored master (Sentinel service name).
+    pub master_name: String,
+    /// Logical database index to select on the master.
+    pub db: i64,
+    /// ACL username for the master/replica data connection.
+    pub redis_username: Option<String>,
+    /// Password for the master/replica data connection.
+    pub redis_password: Option<String>,
+    /// ACL username for the Sentinel control connection.
+    pub sentinel_username: Option<String>,
+    /// Password for the Sentinel control connection.
+    pub sentinel_password: Option<String>,
+    /// TLS settings for the master/replica data connection.
+    pub master_tls: RedisTlsOptions,
+    /// TLS settings for the Sentinel control connection.
+    pub sentinel_tls: RedisTlsOptions,
+}
+
+impl std::fmt::Debug for SentinelSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SentinelSpec")
+            .field("hosts", &self.hosts)
+            .field("master_name", &self.master_name)
+            .field("db", &self.db)
+            .field("redis_username", &self.redis_username)
+            .field(
+                "redis_password",
+                &self.redis_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("sentinel_username", &self.sentinel_username)
+            .field(
+                "sentinel_password",
+                &self.sentinel_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("master_tls", &self.master_tls)
+            .field("sentinel_tls", &self.sentinel_tls)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -39,6 +136,34 @@ impl RedisConnection {
     /// Returns true if Redis Sentinel is configured.
     pub fn is_sentinel_configured(&self) -> bool {
         !self.sentinels.is_empty()
+    }
+
+    /// Builds a [`SentinelSpec`] describing the Sentinel topology and its TLS/auth
+    /// settings, or `None` when Sentinel is not configured.
+    ///
+    /// This is the structured replacement for the `redis+sentinel://` URL the
+    /// standard `redis::Client::open` parser cannot understand; connection backends
+    /// use it to build a native Sentinel client.
+    pub fn sentinel_spec(&self) -> Option<SentinelSpec> {
+        if self.sentinels.is_empty() {
+            return None;
+        }
+
+        Some(SentinelSpec {
+            hosts: self
+                .sentinels
+                .iter()
+                .map(|s| (s.host.clone(), s.port))
+                .collect(),
+            master_name: self.name.clone(),
+            db: i64::from(self.db),
+            redis_username: self.username.clone(),
+            redis_password: self.password.clone(),
+            sentinel_username: self.sentinel_username.clone(),
+            sentinel_password: self.sentinel_password.clone(),
+            master_tls: self.master_tls.clone(),
+            sentinel_tls: self.sentinel_tls.clone(),
+        })
     }
 
     /// Builds a Redis connection URL based on the configuration.
@@ -359,7 +484,10 @@ impl Default for RedisConnection {
             key_prefix: "sockudo:".to_string(),
             sentinels: Vec::new(),
             sentinel_password: None,
+            sentinel_username: None,
             name: "mymaster".to_string(),
+            sentinel_tls: RedisTlsOptions::default(),
+            master_tls: RedisTlsOptions::default(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
         }
@@ -402,6 +530,7 @@ mod redis_connection_tests {
             name: "mymaster".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(conn.to_url(), "redis://127.0.0.1:6379/0");
     }
@@ -420,6 +549,7 @@ mod redis_connection_tests {
             name: "mymaster".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(conn.to_url(), "redis://:secret@127.0.0.1:6379/2");
     }
@@ -438,6 +568,7 @@ mod redis_connection_tests {
             name: "mymaster".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             conn.to_url(),
@@ -459,6 +590,7 @@ mod redis_connection_tests {
             name: "mymaster".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(conn.to_url(), "redis://:pass%40word%23123@127.0.0.1:6379/0");
     }
@@ -504,6 +636,7 @@ mod redis_connection_tests {
             name: "mymaster".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             conn.to_url(),
@@ -528,6 +661,7 @@ mod redis_connection_tests {
             name: "mymaster".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             conn.to_url(),
@@ -552,6 +686,7 @@ mod redis_connection_tests {
             name: "mymaster".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             conn.to_url(),
@@ -582,11 +717,122 @@ mod redis_connection_tests {
             name: "production-master".to_string(),
             cluster: RedisClusterConnection::default(),
             cluster_nodes: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             conn.to_url(),
             "redis+sentinel://:sentinelauth@sentinel1:26379,sentinel2:26380/production-master/2?password=redispass&username=redisuser"
         );
+    }
+
+    #[test]
+    fn test_sentinel_spec_none_when_not_configured() {
+        let conn = RedisConnection::default();
+        assert!(conn.sentinel_spec().is_none());
+    }
+
+    #[test]
+    fn test_sentinel_spec_maps_fields_and_tls() {
+        use super::RedisTlsOptions;
+
+        let conn = RedisConnection {
+            db: 3,
+            username: Some("redisuser".to_string()),
+            password: Some("redispass".to_string()),
+            sentinels: vec![
+                RedisSentinel {
+                    host: "sentinel1".to_string(),
+                    port: 26379,
+                },
+                RedisSentinel {
+                    host: "sentinel2".to_string(),
+                    port: 26380,
+                },
+            ],
+            sentinel_password: Some("sentinelpass".to_string()),
+            sentinel_username: Some("sentineluser".to_string()),
+            name: "production-master".to_string(),
+            sentinel_tls: RedisTlsOptions {
+                enabled: true,
+                accept_invalid_certs: true,
+                ..Default::default()
+            },
+            master_tls: RedisTlsOptions {
+                enabled: true,
+                ca_path: Some("/etc/ssl/ca.pem".to_string()),
+                client_cert_path: Some("/etc/ssl/client.pem".to_string()),
+                client_key_path: Some("/etc/ssl/client.key".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let spec = conn
+            .sentinel_spec()
+            .expect("sentinel spec should be present");
+        assert_eq!(
+            spec.hosts,
+            vec![
+                ("sentinel1".to_string(), 26379),
+                ("sentinel2".to_string(), 26380)
+            ]
+        );
+        assert_eq!(spec.master_name, "production-master");
+        assert_eq!(spec.db, 3);
+        assert_eq!(spec.redis_username.as_deref(), Some("redisuser"));
+        assert_eq!(spec.redis_password.as_deref(), Some("redispass"));
+        assert_eq!(spec.sentinel_username.as_deref(), Some("sentineluser"));
+        assert_eq!(spec.sentinel_password.as_deref(), Some("sentinelpass"));
+        assert!(spec.sentinel_tls.enabled);
+        assert!(spec.sentinel_tls.accept_invalid_certs);
+        assert!(spec.master_tls.enabled);
+        assert!(spec.master_tls.has_client_cert());
+        assert_eq!(spec.master_tls.ca_path.as_deref(), Some("/etc/ssl/ca.pem"));
+    }
+
+    #[test]
+    fn test_redis_tls_options_has_client_cert() {
+        use super::RedisTlsOptions;
+
+        let none = RedisTlsOptions::default();
+        assert!(!none.has_client_cert());
+
+        let cert_only = RedisTlsOptions {
+            client_cert_path: Some("cert.pem".to_string()),
+            ..Default::default()
+        };
+        assert!(!cert_only.has_client_cert());
+
+        let both = RedisTlsOptions {
+            client_cert_path: Some("cert.pem".to_string()),
+            client_key_path: Some("key.pem".to_string()),
+            ..Default::default()
+        };
+        assert!(both.has_client_cert());
+    }
+
+    #[test]
+    fn test_sentinel_tls_deserializes_from_config() {
+        let conn: RedisConnection = sonic_rs::from_str(
+            r#"{
+                "sentinels": [{"host": "sentinel1", "port": 26379}],
+                "name": "mymaster",
+                "sentinel_tls": {"enabled": true, "acceptInvalidCerts": true},
+                "master_tls": {
+                    "enabled": true,
+                    "ca_path": "/ca.pem",
+                    "client_cert_path": "/client.pem",
+                    "client_key_path": "/client.key"
+                }
+            }"#,
+        )
+        .expect("config should deserialize");
+
+        assert!(conn.sentinel_tls.enabled);
+        assert!(conn.sentinel_tls.accept_invalid_certs);
+        assert!(conn.master_tls.enabled);
+        assert_eq!(conn.master_tls.ca_path.as_deref(), Some("/ca.pem"));
+        assert!(conn.master_tls.has_client_cert());
     }
 
     #[test]

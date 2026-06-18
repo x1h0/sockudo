@@ -21,6 +21,30 @@ pub(super) fn apply(options: &mut ServerOptions) -> Result<(), Box<dyn std::erro
     if let Ok(prefix) = std::env::var("DATABASE_REDIS_KEY_PREFIX") {
         options.database.redis.key_prefix = prefix;
     }
+
+    // --- Database: Redis Sentinel ---
+    if let Ok(sentinel_password) = std::env::var("DATABASE_REDIS_SENTINEL_PASSWORD") {
+        options.database.redis.sentinel_password = if sentinel_password.is_empty() {
+            None
+        } else {
+            Some(sentinel_password)
+        };
+    }
+    if let Ok(sentinel_username) = std::env::var("DATABASE_REDIS_SENTINEL_USERNAME") {
+        options.database.redis.sentinel_username = if sentinel_username.is_empty() {
+            None
+        } else {
+            Some(sentinel_username)
+        };
+    }
+    apply_redis_tls_env(
+        &mut options.database.redis.sentinel_tls,
+        "DATABASE_REDIS_SENTINEL_TLS",
+    );
+    apply_redis_tls_env(
+        &mut options.database.redis.master_tls,
+        "DATABASE_REDIS_MASTER_TLS",
+    );
     if let Ok(cluster_username) = std::env::var("DATABASE_REDIS_CLUSTER_USERNAME") {
         options.database.redis.cluster.username = if cluster_username.is_empty() {
             None
@@ -145,4 +169,36 @@ pub(super) fn apply(options: &mut ServerOptions) -> Result<(), Box<dyn std::erro
     }
 
     Ok(())
+}
+
+/// Applies the `<PREFIX>_ENABLED`, `<PREFIX>_ACCEPT_INVALID_CERTS`, `<PREFIX>_CA_PATH`,
+/// `<PREFIX>_CLIENT_CERT_PATH`, and `<PREFIX>_CLIENT_KEY_PATH` environment variables
+/// onto a [`RedisTlsOptions`] block, leaving unset fields untouched.
+fn apply_redis_tls_env(tls: &mut RedisTlsOptions, prefix: &str) {
+    tls.enabled = parse_bool_env(&format!("{prefix}_ENABLED"), tls.enabled);
+    tls.accept_invalid_certs = parse_bool_env(
+        &format!("{prefix}_ACCEPT_INVALID_CERTS"),
+        tls.accept_invalid_certs,
+    );
+    if let Ok(ca_path) = std::env::var(format!("{prefix}_CA_PATH")) {
+        tls.ca_path = if ca_path.is_empty() {
+            None
+        } else {
+            Some(ca_path)
+        };
+    }
+    if let Ok(cert_path) = std::env::var(format!("{prefix}_CLIENT_CERT_PATH")) {
+        tls.client_cert_path = if cert_path.is_empty() {
+            None
+        } else {
+            Some(cert_path)
+        };
+    }
+    if let Ok(key_path) = std::env::var(format!("{prefix}_CLIENT_KEY_PATH")) {
+        tls.client_key_path = if key_path.is_empty() {
+            None
+        } else {
+            Some(key_path)
+        };
+    }
 }

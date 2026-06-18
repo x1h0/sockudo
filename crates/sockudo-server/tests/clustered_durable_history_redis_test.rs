@@ -218,6 +218,7 @@ async fn build_redis_node(
         prefix: prefix.to_string(),
         request_timeout_ms: 1000,
         cluster_mode: false,
+        sentinel: None,
     })
     .await
     .unwrap();

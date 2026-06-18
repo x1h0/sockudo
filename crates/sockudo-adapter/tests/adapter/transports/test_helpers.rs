@@ -21,6 +21,7 @@ pub fn get_redis_config() -> RedisAdapterConfig {
         prefix: format!("test_{}", Uuid::new_v4().to_string().replace('-', "")),
         request_timeout_ms: 1000, // Reduced timeout
         cluster_mode: false,
+        sentinel: None,
     }
 }
 

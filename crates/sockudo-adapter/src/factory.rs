@@ -223,19 +223,35 @@ impl AdapterFactory {
             // Match on the enum
             #[cfg(feature = "redis")]
             AdapterDriver::Redis => {
-                let redis_url = config
+                let url_override = config
                     .redis
                     .redis_pub_options
                     .get("url")
                     .and_then(|v| v.as_str())
-                    .map(String::from)
-                    .unwrap_or_else(|| db_config.redis.to_url());
+                    .map(String::from);
+
+                // An explicit pub/sub URL override always wins and uses the standalone
+                // path. Otherwise, when Sentinel hosts are configured, connect via a
+                // native Sentinel client (the legacy `redis+sentinel://` URL cannot be
+                // parsed by `redis::Client::open`).
+                let (redis_url, sentinel) = match url_override {
+                    Some(url) => (url, None),
+                    None => match db_config.redis.sentinel_spec() {
+                        // `url` is diagnostic-only on the Sentinel path; use a
+                        // credential-free descriptor instead of the password-bearing URL.
+                        Some(spec) => {
+                            (format!("redis+sentinel://{}", spec.master_name), Some(spec))
+                        }
+                        None => (db_config.redis.to_url(), None),
+                    },
+                };
 
                 let adapter_options = RedisAdapterOptions {
                     url: redis_url,
                     prefix: config.redis.prefix.clone(),
                     request_timeout_ms: config.redis.requests_timeout,
                     cluster_mode: config.redis.cluster_mode,
+                    sentinel,
                 };
                 match RedisAdapter::new(adapter_options).await {
                     Ok(mut adapter) => {

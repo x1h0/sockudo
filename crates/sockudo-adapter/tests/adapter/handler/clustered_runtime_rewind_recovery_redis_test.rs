@@ -217,6 +217,7 @@ async fn build_redis_node_with_version_store(
         prefix: prefix.to_string(),
         request_timeout_ms: 1000,
         cluster_mode: false,
+        sentinel: None,
     })
     .await
     .unwrap();
