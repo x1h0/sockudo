@@ -185,6 +185,91 @@ services:
       retries: 5
       start_period: 10s
 
+  # ===========================================================================
+  # Opt-in Redis Sentinel + TLS fixture (profile: sentinel-tls)
+  # ---------------------------------------------------------------------------
+  # NOT started by the default `docker compose -f docker-compose.test.yml up -d`
+  # (it has a profile), so CI is unaffected. To use it:
+  #   1. tests/sentinel-tls/generate-certs.sh
+  #   2. docker compose -f docker-compose.test.yml --profile sentinel-tls up -d
+  # See tests/sentinel-tls/README.md and the `redis_sentinel_live` test.
+  # ===========================================================================
+  redis-master-tls:
+    image: redis:7-alpine
+    profiles: ["sentinel-tls"]
+    command: >
+      redis-server
+      --port 0
+      --tls-port 6379
+      --tls-cert-file /certs/redis.crt
+      --tls-key-file /certs/redis.key
+      --tls-ca-cert-file /certs/ca.crt
+      --tls-auth-clients yes
+      --requirepass masterpass
+      --masterauth masterpass
+    ports:
+      - "16380:6379"
+    volumes:
+      - ./tests/sentinel-tls/certs:/certs:ro
+    networks:
+      - sockudo-network
+    mem_limit: 128m
+    cpus: "0.5"
+
+  redis-sentinel-tls-1:
+    image: redis:7-alpine
+    profiles: ["sentinel-tls"]
+    depends_on:
+      - redis-master-tls
+    command: ["sh", "-c", "cp /conf/sentinel.conf /data/sentinel.conf && exec redis-sentinel /data/sentinel.conf"]
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./tests/sentinel-tls/certs:/certs:ro
+      - ./tests/sentinel-tls/sentinel.conf:/conf/sentinel.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - sockudo-network
+    mem_limit: 64m
+    cpus: "0.25"
+
+  redis-sentinel-tls-2:
+    image: redis:7-alpine
+    profiles: ["sentinel-tls"]
+    depends_on:
+      - redis-master-tls
+    command: ["sh", "-c", "cp /conf/sentinel.conf /data/sentinel.conf && exec redis-sentinel /data/sentinel.conf"]
+    ports:
+      - "26380:26379"
+    volumes:
+      - ./tests/sentinel-tls/certs:/certs:ro
+      - ./tests/sentinel-tls/sentinel.conf:/conf/sentinel.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - sockudo-network
+    mem_limit: 64m
+    cpus: "0.25"
+
+  redis-sentinel-tls-3:
+    image: redis:7-alpine
+    profiles: ["sentinel-tls"]
+    depends_on:
+      - redis-master-tls
+    command: ["sh", "-c", "cp /conf/sentinel.conf /data/sentinel.conf && exec redis-sentinel /data/sentinel.conf"]
+    ports:
+      - "26381:26379"
+    volumes:
+      - ./tests/sentinel-tls/certs:/certs:ro
+      - ./tests/sentinel-tls/sentinel.conf:/conf/sentinel.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - sockudo-network
+    mem_limit: 64m
+    cpus: "0.25"
+
 networks:
   sockudo-network:
     driver: bridge
