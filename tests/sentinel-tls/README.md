@@ -28,14 +28,17 @@ make sentinel-tls-test
 make sentinel-tls-down
 ```
 
-`make sentinel-tls-test` is equivalent to:
+`make sentinel-tls-test` is equivalent to the following. Use **absolute** cert
+paths: `cargo test -p` runs the test binary with its working directory set to the
+crate directory (`crates/sockudo-adapter/`), not the workspace root, so relative
+paths will not resolve.
 
 ```bash
 SOCKUDO_SENTINEL_TLS=1 SOCKUDO_MASTER_TLS=1 \
   SOCKUDO_REDIS_PASSWORD=masterpass \
-  SOCKUDO_TLS_CA_PATH=tests/sentinel-tls/certs/ca.crt \
-  SOCKUDO_TLS_CLIENT_CERT_PATH=tests/sentinel-tls/certs/client.crt \
-  SOCKUDO_TLS_CLIENT_KEY_PATH=tests/sentinel-tls/certs/client.key \
+  SOCKUDO_TLS_CA_PATH="$PWD/tests/sentinel-tls/certs/ca.crt" \
+  SOCKUDO_TLS_CLIENT_CERT_PATH="$PWD/tests/sentinel-tls/certs/client.crt" \
+  SOCKUDO_TLS_CLIENT_KEY_PATH="$PWD/tests/sentinel-tls/certs/client.key" \
   cargo test -p sockudo-adapter --features redis \
     --test redis_sentinel_live -- --ignored --nocapture
 ```

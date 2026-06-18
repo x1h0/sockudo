@@ -194,11 +194,13 @@ sentinel-tls-down: ## Stop the Redis Sentinel + TLS test fixture
 
 .PHONY: sentinel-tls-test
 sentinel-tls-test: ## Run the gated live Sentinel TLS integration tests against the fixture
+	@# Absolute cert paths: `cargo test -p` runs the binary with CWD set to the
+	@# crate directory, not the workspace root, so relative paths would not resolve.
 	@SOCKUDO_SENTINEL_TLS=1 SOCKUDO_MASTER_TLS=1 \
 		SOCKUDO_REDIS_PASSWORD=masterpass \
-		SOCKUDO_TLS_CA_PATH=tests/sentinel-tls/certs/ca.crt \
-		SOCKUDO_TLS_CLIENT_CERT_PATH=tests/sentinel-tls/certs/client.crt \
-		SOCKUDO_TLS_CLIENT_KEY_PATH=tests/sentinel-tls/certs/client.key \
+		SOCKUDO_TLS_CA_PATH=$(CURDIR)/tests/sentinel-tls/certs/ca.crt \
+		SOCKUDO_TLS_CLIENT_CERT_PATH=$(CURDIR)/tests/sentinel-tls/certs/client.crt \
+		SOCKUDO_TLS_CLIENT_KEY_PATH=$(CURDIR)/tests/sentinel-tls/certs/client.key \
 		cargo test -p sockudo-adapter --features redis --test redis_sentinel_live -- --ignored --nocapture
 
 .PHONY: unix-socket-up

@@ -9,11 +9,13 @@
 //!
 //! ```bash
 //! make sentinel-tls-up
+//! # Cert paths must be absolute: `cargo test -p` sets the test binary's working
+//! # directory to the crate dir, not the workspace root.
 //! SOCKUDO_SENTINEL_TLS=1 SOCKUDO_MASTER_TLS=1 \
 //!   SOCKUDO_REDIS_PASSWORD=masterpass \
-//!   SOCKUDO_TLS_CA_PATH=tests/sentinel-tls/certs/ca.crt \
-//!   SOCKUDO_TLS_CLIENT_CERT_PATH=tests/sentinel-tls/certs/client.crt \
-//!   SOCKUDO_TLS_CLIENT_KEY_PATH=tests/sentinel-tls/certs/client.key \
+//!   SOCKUDO_TLS_CA_PATH="$PWD/tests/sentinel-tls/certs/ca.crt" \
+//!   SOCKUDO_TLS_CLIENT_CERT_PATH="$PWD/tests/sentinel-tls/certs/client.crt" \
+//!   SOCKUDO_TLS_CLIENT_KEY_PATH="$PWD/tests/sentinel-tls/certs/client.key" \
 //!   cargo test -p sockudo-adapter --features redis --test redis_sentinel_live -- --ignored
 //! ```
 //!
