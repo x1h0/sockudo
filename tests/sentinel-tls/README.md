@@ -78,5 +78,14 @@ certificates:
 | `SOCKUDO_TLS_INSECURE` | Skip cert/hostname verification (dangerous) | off |
 | `SOCKUDO_REDIS_DB` | Database index | `0` |
 
+## Running in CI
+
+A dedicated, opt-in workflow (`.github/workflows/sentinel-tls.yml`) runs these
+tests against the same fixture on a Linux runner. It is **not** part of the
+default CI run; trigger it manually (`workflow_dispatch`) or add the
+`run-sentinel-tls` label to a pull request. On the runner the only extra step is
+`echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts` (CI has sudo),
+which is the host-resolution piece described above.
+
 > The certificates generated here are throwaway material for local testing only.
 > Never commit `certs/` or reuse it elsewhere.
