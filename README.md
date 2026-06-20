@@ -210,7 +210,7 @@ modules and SwiftPM publish from this monorepo with package-manager-native tags 
 | Python | `sockudo-http-python` |
 | PHP | `sockudo/sockudo-php-server` |
 | Ruby | `sockudo` |
-| Go | `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5` |
+| Go | `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v2` |
 | Rust | `sockudo-http` |
 | Java | `io.sockudo:sockudo-http-java` |
 | .NET | `SockudoServer` |

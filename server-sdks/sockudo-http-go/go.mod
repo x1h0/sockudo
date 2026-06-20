@@ -1,4 +1,4 @@
-module github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5
+module github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v2
 
 go 1.25.0
 

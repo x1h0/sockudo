@@ -149,7 +149,7 @@ Submit this repository URL to Packagist:
 https://github.com/sockudo/sockudo
 ```
 
-Stable Packagist versions come from Composer-compatible root tags such as `v5.0.0`. Before pushing a
+Stable Packagist versions come from Composer-compatible root tags such as `v2.0.0`. Before pushing a
 root PHP release tag, run the PHP release dry run:
 
 ```bash
@@ -158,14 +158,14 @@ gh workflow run sdk-release.yml -f package=server-php -f dry_run=true
 
 ### Go Modules
 
-Package: `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5`
+Package: `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v2`
 
 Go modules publish from semantic VCS tags. This monorepo uses a subdirectory module path, so release
 tags must include the module directory prefix:
 
 ```bash
-git tag server-sdks/sockudo-http-go/v5.0.0
-git push origin server-sdks/sockudo-http-go/v5.0.0
+git tag server-sdks/sockudo-http-go/v2.0.0
+git push origin server-sdks/sockudo-http-go/v2.0.0
 ```
 
 ### SwiftPM
@@ -197,7 +197,7 @@ SwiftPM consumers only see root SemVer tags, so Swift releases use root tags suc
 | `sockudo-http-python` | Ruff format/check, pytest, build, twine check | `server-python-vX.Y.Z` |
 | `sockudo/sockudo-php-server` | Composer validate, PHP-CS-Fixer, PHPLint, PHPUnit | `vX.Y.Z` |
 | `sockudo` Ruby gem | RuboCop, RSpec, gem build | `server-ruby-vX.Y.Z` |
-| `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5` | gofmt, go vet, go test | `server-sdks/sockudo-http-go/vX.Y.Z` |
+| `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v2` | gofmt, go vet, go test | `server-sdks/sockudo-http-go/vX.Y.Z` |
 | `sockudo-http` | cargo fmt, clippy, test, package | `server-rust-vX.Y.Z` |
 | `io.sockudo:sockudo-http-java` | Gradle check and `publishToMavenLocal` | `server-java-vX.Y.Z` |
 | `SockudoServer`, `PusherServer` | `dotnet format`, build, test, pack | `server-dotnet-vX.Y.Z` |

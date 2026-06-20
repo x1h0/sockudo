@@ -31,7 +31,7 @@ cd sockudo/client-sdks/sockudo-kotlin
 
 ```kotlin
 dependencies {
-    implementation("io.sockudo:sockudo-kotlin:0.1.0")
+    implementation("io.sockudo:sockudo-kotlin:2.0.0")
 }
 ```
 

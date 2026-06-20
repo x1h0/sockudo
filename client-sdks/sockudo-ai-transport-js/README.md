@@ -140,7 +140,7 @@ These lanes are part of CI for the `0.1.x` release line.
 | Vercel AI SDK  | `ai` v6                                                              | locked dev lane plus peer range `^6`                                     |
 | Direct LLMs    | OpenAI SDK 6.x, Anthropic SDK 0.103.x, compatible HTTP/SSE endpoints | provider adapter unit tests                                              |
 | Sockudo server | 4.x with AI Transport wire protocol v1                               | pinned integration server SHA `f66434eab44e688d3df42e56d8ebaf9aba6b1575` |
-| Sockudo client | `@sockudo/client` `^1.3.0`                                           | peer dependency and integration adapter tests                            |
+| Sockudo client | `@sockudo/client` `^2.0.0`                                           | peer dependency and integration adapter tests                            |
 
 When `@sockudo/client` exposes server handshake feature flags, the SDK checks for `ai-transport`
 during client transport construction. If a server explicitly advertises feature flags without

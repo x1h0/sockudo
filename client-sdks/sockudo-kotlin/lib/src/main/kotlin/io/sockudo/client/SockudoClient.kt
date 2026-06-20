@@ -633,7 +633,7 @@ class SockudoClient(
             "protocol=${p.version}",
             *(if (options.protocolVersion >= 2) arrayOf("format=${options.wireFormat.queryValue}") else emptyArray()),
             "client=kotlin",
-            "version=0.1.0",
+            "version=2.0.0",
             "flash=false",
         ).joinToString("&")
         return URI(scheme, null, host, port, path, query, null).toString()

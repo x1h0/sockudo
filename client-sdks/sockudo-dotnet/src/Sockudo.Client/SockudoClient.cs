@@ -106,7 +106,7 @@ public sealed class SockudoClient : IAsyncDisposable
         {
             ["protocol"] = _prefix.Version,
             ["client"] = "csharp",
-            ["version"] = "0.1.0",
+            ["version"] = "2.0.0",
             ["flash"] = false,
         };
         if (Options.ProtocolVersion >= 2)

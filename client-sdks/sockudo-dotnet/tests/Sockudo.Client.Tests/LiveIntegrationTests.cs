@@ -174,7 +174,7 @@ public sealed class LiveIntegrationTests
         {
             ["protocol"] = protocolVersion,
             ["client"] = "dotnet-live",
-            ["version"] = "1.0.0",
+            ["version"] = "2.0.0",
         };
 
         if (protocolVersion == 2)

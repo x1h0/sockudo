@@ -25,14 +25,14 @@ cd sockudo/server-sdks/sockudo-http-java
 <dependency>
   <groupId>io.sockudo</groupId>
   <artifactId>sockudo-http-java</artifactId>
-  <version>1.0.0</version>
+  <version>2.0.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```kotlin
-implementation("io.sockudo:sockudo-http-java:1.0.0")
+implementation("io.sockudo:sockudo-http-java:2.0.0")
 ```
 
 ## Synchronous vs asynchronous

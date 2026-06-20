@@ -15,7 +15,7 @@ this monorepo using their package-manager-native release rules.
 | Package | Directory |
 | --- | --- |
 | `SockudoServer` | `server-sdks/sockudo-http-dotnet` |
-| `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5` | `server-sdks/sockudo-http-go` |
+| `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v2` | `server-sdks/sockudo-http-go` |
 | `io.sockudo:sockudo-http-java` | `server-sdks/sockudo-http-java` |
 | `sockudo` | `server-sdks/sockudo-http-node` |
 | `sockudo/sockudo-php-server` | `server-sdks/sockudo-http-php` |

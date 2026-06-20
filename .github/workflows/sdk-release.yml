@@ -702,7 +702,7 @@ jobs:
       - name: Go module publish notice
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
         run: |
-          echo "Go modules publish from VCS tags. Push tags like server-sdks/sockudo-http-go/v5.0.0 for the monorepo module path."
+          echo "Go modules publish from VCS tags. Push tags like server-sdks/sockudo-http-go/v2.0.0 for the monorepo module path."
 
   client-swift:
     name: Gate SockudoSwift
