@@ -37,7 +37,7 @@ or signing credentials:
 | `NUGET_PUSHER_USER` | NuGet | optional nuget.org username/profile name that owns `PusherServer` |
 | `MAVEN_CENTRAL_USERNAME` | Maven Central | Central Portal user token username |
 | `MAVEN_CENTRAL_PASSWORD` | Maven Central | Central Portal user token password |
-| `MAVEN_GPG_KEY_ID` | Maven Central | signing key id |
+| `MAVEN_GPG_KEY_ID` | Maven Central | optional signing key id; Gradle infers the key from `MAVEN_GPG_PRIVATE_KEY` |
 | `MAVEN_GPG_PRIVATE_KEY` | Maven Central | ASCII-armored private key, escaped-newline string, or base64-encoded ASCII-armored key |
 | `MAVEN_GPG_PASSPHRASE` | Maven Central | signing key passphrase |
 | `CRATES_IO_TOKEN` | crates.io | fallback token used only when trusted publishing is not configured |

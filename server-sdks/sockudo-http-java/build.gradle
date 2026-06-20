@@ -160,11 +160,10 @@ signing {
         }
     }
     def signingKey = normalizeSigningKey(findProperty("signingInMemoryKey") ?: System.getenv("MAVEN_GPG_PRIVATE_KEY"))
-    def signingKeyId = findProperty("signingInMemoryKeyId") ?: System.getenv("MAVEN_GPG_KEY_ID")
     def signingPassword = findProperty("signingInMemoryKeyPassword") ?: System.getenv("MAVEN_GPG_PASSPHRASE")
     required { signingKey }
     if (signingKey) {
-        useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+        useInMemoryPgpKeys(signingKey, signingPassword)
         sign publishing.publications.mavenJava
     }
 }

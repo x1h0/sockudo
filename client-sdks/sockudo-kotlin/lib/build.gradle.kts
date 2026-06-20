@@ -121,15 +121,13 @@ signing {
 
     val signingKey =
         normalizeSigningKey((findProperty("signingInMemoryKey") as String?) ?: System.getenv("MAVEN_GPG_PRIVATE_KEY"))
-    val signingKeyId =
-        (findProperty("signingInMemoryKeyId") as String?) ?: System.getenv("MAVEN_GPG_KEY_ID")
     val signingPassword =
         (findProperty("signingInMemoryKeyPassword") as String?) ?: System.getenv("MAVEN_GPG_PASSPHRASE")
 
     isRequired = !signingKey.isNullOrBlank()
 
     if (!signingKey.isNullOrBlank()) {
-        useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+        useInMemoryPgpKeys(signingKey, signingPassword)
         sign(publishing.publications["mavenJava"])
     }
 }
