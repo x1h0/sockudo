@@ -11,7 +11,6 @@ import 'package:sockudo_flutter/src/delta_compression.dart';
 import 'package:sockudo_flutter/src/fossil_delta.dart';
 import 'package:sockudo_flutter/src/protocol_codec.dart';
 import 'package:sodium/sodium.dart' as sodium;
-import 'package:sodium_libs/sodium_libs.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -635,7 +634,7 @@ void main() {
 
     sodium.Sodium sodiumInstance;
     try {
-      sodiumInstance = await SodiumInit.init();
+      sodiumInstance = await sodium.SodiumInit.init();
     } catch (_) {
       return;
     }

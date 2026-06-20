@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:sodium/sodium.dart' as sodium;
-import 'package:sodium_libs/sodium_libs.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
 
@@ -283,7 +282,7 @@ class SockudoClient {
     if (existing != null) {
       return existing;
     }
-    final created = SodiumInit.init();
+    final created = Future<sodium.Sodium>.value(sodium.SodiumInit.init());
     _sodium = created;
     return created;
   }

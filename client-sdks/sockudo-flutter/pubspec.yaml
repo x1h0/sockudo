@@ -25,8 +25,7 @@ dependencies:
   messagepack: ^0.2.1
   meta: ^1.17.0
   protobuf: ^6.0.0
-  sodium: ^3.4.5
-  sodium_libs: ^3.4.5
+  sodium: ^4.0.2+1
   web_socket_channel: ^3.0.3
 
 dev_dependencies:
