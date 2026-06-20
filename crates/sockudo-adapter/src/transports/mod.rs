@@ -10,6 +10,8 @@ pub mod nats_transport;
 pub mod pulsar_transport;
 #[cfg(feature = "rabbitmq")]
 pub mod rabbitmq_transport;
+#[cfg(feature = "redis")]
+pub mod redis_client;
 #[cfg(feature = "redis-cluster")]
 pub mod redis_cluster_sharded_pubsub;
 #[cfg(feature = "redis-cluster")]

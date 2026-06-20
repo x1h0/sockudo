@@ -1,0 +1,95 @@
+name: Live - Redis Sentinel TLS
+
+# Opt-in live validation of the Redis adapter's Sentinel TLS / mutual-TLS path.
+# It is intentionally NOT part of the default CI (which skips `#[ignore]`d tests
+# and the `sentinel-tls` compose profile). It runs only when triggered manually
+# or when a pull request carries the `run-sentinel-tls` label.
+on:
+  workflow_dispatch: {}
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  sentinel-tls:
+    name: Redis Sentinel + TLS live test
+    runs-on: ubuntu-24.04
+    # Manual runs always; on PRs only when explicitly labeled `run-sentinel-tls`.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-sentinel-tls')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-sentinel-tls-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev cmake protobuf-compiler libprotobuf-dev
+
+      - name: Generate Sentinel TLS test certificates
+        run: tests/sentinel-tls/generate-certs.sh
+
+      - name: Start Redis Sentinel + TLS fixture
+        run: docker compose -f docker-compose.test.yml --profile sentinel-tls up -d
+
+      - name: Resolve host.docker.internal on the runner
+        # The sentinels return the master at `host.docker.internal:16380`; map it to
+        # the loopback so the runner-host test can reach the published master port.
+        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+
+      - name: Wait for sentinels to be ready
+        run: |
+          ok=0
+          for i in $(seq 1 30); do
+            if docker exec "$(docker ps -q -f name=redis-sentinel-tls-1)" \
+              redis-cli --tls --cert /certs/client.crt --key /certs/client.key \
+              --cacert /certs/ca.crt -p 26379 ping >/dev/null 2>&1; then
+              echo "Sentinel is ready"
+              ok=1
+              break
+            fi
+            echo "Waiting for sentinel... ($i/30)"
+            sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::Sentinel did not become ready"
+            docker compose -f docker-compose.test.yml --profile sentinel-tls logs || true
+            exit 1
+          fi
+
+      - name: Run live Sentinel TLS tests
+        env:
+          SOCKUDO_SENTINEL_HOSTS: 127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381
+          SOCKUDO_SENTINEL_MASTER_NAME: mymaster
+          SOCKUDO_SENTINEL_TLS: "1"
+          SOCKUDO_MASTER_TLS: "1"
+          SOCKUDO_REDIS_PASSWORD: masterpass
+          SOCKUDO_TLS_CA_PATH: ${{ github.workspace }}/tests/sentinel-tls/certs/ca.crt
+          SOCKUDO_TLS_CLIENT_CERT_PATH: ${{ github.workspace }}/tests/sentinel-tls/certs/client.crt
+          SOCKUDO_TLS_CLIENT_KEY_PATH: ${{ github.workspace }}/tests/sentinel-tls/certs/client.key
+        run: cargo test -p sockudo-adapter --features redis --test redis_sentinel_live -- --ignored --nocapture
+
+      - name: Tear down fixture
+        if: always()
+        run: docker compose -f docker-compose.test.yml --profile sentinel-tls down -v

@@ -274,6 +274,7 @@ mod tests {
             name: "mymaster".to_string(),
             cluster: Default::default(),
             cluster_nodes: vec![],
+            ..Default::default()
         }
     }
 

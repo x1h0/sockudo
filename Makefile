@@ -176,6 +176,33 @@ test: ## Run basic connectivity tests
 	@echo "$(YELLOW)Testing dashboard UI...$(RESET)"
 	@curl -f http://localhost:5174/ || echo "$(RED)Dashboard UI test failed$(RESET)"
 
+.PHONY: sentinel-tls-up
+sentinel-tls-up: ## Start the opt-in Redis Sentinel + TLS test fixture
+	@echo "$(BLUE)Generating Sentinel TLS test certificates...$(RESET)"
+	@tests/sentinel-tls/generate-certs.sh
+	@echo "$(BLUE)Starting Redis Sentinel + TLS fixture...$(RESET)"
+	@docker-compose -f docker-compose.test.yml --profile sentinel-tls up -d
+	@echo "$(GREEN)Sentinel fixture up. Sentinels (TLS): localhost:26379-26381$(RESET)"
+	@echo "$(YELLOW)If the master hop cannot be resolved from the host, add$(RESET)"
+	@echo "$(YELLOW)  127.0.0.1 host.docker.internal$(RESET)"
+	@echo "$(YELLOW)to /etc/hosts. See tests/sentinel-tls/README.md.$(RESET)"
+
+.PHONY: sentinel-tls-down
+sentinel-tls-down: ## Stop the Redis Sentinel + TLS test fixture
+	@echo "$(BLUE)Stopping Redis Sentinel + TLS fixture...$(RESET)"
+	@docker-compose -f docker-compose.test.yml --profile sentinel-tls down -v
+
+.PHONY: sentinel-tls-test
+sentinel-tls-test: ## Run the gated live Sentinel TLS integration tests against the fixture
+	@# Absolute cert paths: `cargo test -p` runs the binary with CWD set to the
+	@# crate directory, not the workspace root, so relative paths would not resolve.
+	@SOCKUDO_SENTINEL_TLS=1 SOCKUDO_MASTER_TLS=1 \
+		SOCKUDO_REDIS_PASSWORD=masterpass \
+		SOCKUDO_TLS_CA_PATH=$(CURDIR)/tests/sentinel-tls/certs/ca.crt \
+		SOCKUDO_TLS_CLIENT_CERT_PATH=$(CURDIR)/tests/sentinel-tls/certs/client.crt \
+		SOCKUDO_TLS_CLIENT_KEY_PATH=$(CURDIR)/tests/sentinel-tls/certs/client.key \
+		cargo test -p sockudo-adapter --features redis --test redis_sentinel_live -- --ignored --nocapture
+
 .PHONY: unix-socket-up
 unix-socket-up: ## Start Unix socket test environment with Nginx proxy
 	@echo "$(BLUE)Starting Unix socket test environment...$(RESET)"

@@ -432,7 +432,7 @@ This document provides a detailed comparison of features available in **Ably**, 
 | **Auto-Discovery** | ✅ | ✅ | ✅ | - | - |
 
 **Notes:**
-- **Redis Sentinel**: Sockudo supports Redis Sentinel with configurable sentinel nodes, sentinel password, and master name. Connection URL is automatically built in `redis+sentinel://` format. Centrifugo also supports this format.
+- **Redis Sentinel**: Sockudo supports Redis Sentinel with configurable sentinel nodes, sentinel username/password, and master name. The Redis adapter connects through a native Sentinel client and supports TLS plus mutual-TLS (client certificates) independently on the client→sentinel and client→master hops. Centrifugo also supports Sentinel.
 - **Redis Sharding**: Spread channels across multiple Redis instances using consistent hashing.
 - **NATS Raw Mode**: Direct channel mapping to NATS subjects without Centrifugo wrapping.
 - **Separate Broker/Presence**: Use different backends for PUB/SUB vs presence. Example: NATS for broker, Redis for presence.

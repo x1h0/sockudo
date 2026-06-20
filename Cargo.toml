@@ -124,9 +124,11 @@ redis = { version = "^1", features = [
   "json",
   "cluster",
   "cluster-async",
+  "sentinel",
   "tls-rustls",
   "tokio-rustls-comp",
   "tls-rustls-webpki-roots",
+  "tls-rustls-insecure",
   "connection-manager",
 ] }
 regex = "1.12.2"

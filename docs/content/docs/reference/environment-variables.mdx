@@ -89,6 +89,18 @@ This page lists every runtime environment variable referenced by the server, cor
 | `DATABASE_REDIS_PASSWORD` | Redis password. |
 | `DATABASE_REDIS_DB` | Redis database index. |
 | `DATABASE_REDIS_KEY_PREFIX` | Redis key prefix. |
+| `DATABASE_REDIS_SENTINEL_USERNAME` | ACL username for authenticating to the Sentinel nodes. |
+| `DATABASE_REDIS_SENTINEL_PASSWORD` | Password for authenticating to the Sentinel nodes. |
+| `DATABASE_REDIS_SENTINEL_TLS_ENABLED` | Enables TLS for the connection to the Sentinel nodes. |
+| `DATABASE_REDIS_SENTINEL_TLS_ACCEPT_INVALID_CERTS` | Skips certificate/hostname verification for the Sentinel connection (dangerous). |
+| `DATABASE_REDIS_SENTINEL_TLS_CA_PATH` | PEM CA certificate path for the Sentinel connection (private CAs). |
+| `DATABASE_REDIS_SENTINEL_TLS_CLIENT_CERT_PATH` | PEM client certificate path for mutual TLS to the Sentinel nodes. |
+| `DATABASE_REDIS_SENTINEL_TLS_CLIENT_KEY_PATH` | PEM client private key path for mutual TLS to the Sentinel nodes. |
+| `DATABASE_REDIS_MASTER_TLS_ENABLED` | Enables TLS for the data connection to the Sentinel-managed master/replica. |
+| `DATABASE_REDIS_MASTER_TLS_ACCEPT_INVALID_CERTS` | Skips certificate/hostname verification for the master connection (dangerous). |
+| `DATABASE_REDIS_MASTER_TLS_CA_PATH` | PEM CA certificate path for the master connection (private CAs). |
+| `DATABASE_REDIS_MASTER_TLS_CLIENT_CERT_PATH` | PEM client certificate path for mutual TLS to the master. |
+| `DATABASE_REDIS_MASTER_TLS_CLIENT_KEY_PATH` | PEM client private key path for mutual TLS to the master. |
 | `DATABASE_REDIS_CLUSTER_NODES` | Comma-separated Redis Cluster seed nodes. |
 | `REDIS_CLUSTER_NODES` | Comma-separated Redis Cluster seed nodes, also applied to adapter and queue cluster config. |
 | `DATABASE_REDIS_CLUSTER_USERNAME` | Redis Cluster username. |
