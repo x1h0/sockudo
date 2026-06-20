@@ -158,19 +158,29 @@ gh workflow run sdk-release.yml -f package=server-php -f dry_run=true
 
 ### Go Modules
 
-Package: `github.com/sockudo/sockudo-http-go/v5`
+Package: `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5`
 
-Go modules publish from semantic VCS tags. The current module path points at the legacy package
-repository, so push matching `v5.x.y` tags to that repository or intentionally change the module
-path in a separate breaking change.
+Go modules publish from semantic VCS tags. This monorepo uses a subdirectory module path, so release
+tags must include the module directory prefix:
+
+```bash
+git tag server-sdks/sockudo-http-go/v5.0.0
+git push origin server-sdks/sockudo-http-go/v5.0.0
+```
 
 ### SwiftPM
 
 Packages: `SockudoSwift`, `Sockudo`
 
-SwiftPM packages publish from Git tags on repositories whose root contains `Package.swift`. These
-SDKs currently live under monorepo subdirectories, so publish via package repositories/subtree
-splits or intentionally migrate consumers to a new package URL in a separate breaking change.
+SwiftPM packages publish from Git tags on repositories whose root contains `Package.swift`. The root
+`Package.swift` exposes `SockudoSwift`, `Sockudo`, and the compatibility `Pusher` product from this
+monorepo package URL:
+
+```text
+https://github.com/sockudo/sockudo
+```
+
+SwiftPM consumers only see root SemVer tags, so Swift releases use root tags such as `v1.0.0`.
 
 ## Package Commands
 
@@ -182,16 +192,16 @@ splits or intentionally migrate consumers to a new package URL in a separate bre
 | `sockudo_flutter` | `dart format`, analyze, test, publish dry-run | `client-flutter-vX.Y.Z` |
 | `io.sockudo:sockudo-kotlin` | Gradle check and `publishToMavenLocal` | `client-kotlin-vX.Y.Z` |
 | `sockudo-python` | Ruff format/check, pytest, build, twine check | `client-python-vX.Y.Z` |
-| `SockudoSwift` | Swift build/test and SwiftLint | `client-swift-vX.Y.Z` |
+| `SockudoSwift` | Swift build/test and SwiftLint | `vX.Y.Z` |
 | `sockudo` Node server SDK | npm lint/typecheck/local-test and `npm pack --dry-run` | `server-node-vX.Y.Z` |
 | `sockudo-http-python` | Ruff format/check, pytest, build, twine check | `server-python-vX.Y.Z` |
 | `sockudo/sockudo-php-server` | Composer validate, PHP-CS-Fixer, PHPLint, PHPUnit | `vX.Y.Z` |
 | `sockudo` Ruby gem | RuboCop, RSpec, gem build | `server-ruby-vX.Y.Z` |
-| `github.com/sockudo/sockudo-http-go/v5` | gofmt, go vet, go test | `server-go-vX.Y.Z` |
+| `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5` | gofmt, go vet, go test | `server-sdks/sockudo-http-go/vX.Y.Z` |
 | `sockudo-http` | cargo fmt, clippy, test, package | `server-rust-vX.Y.Z` |
 | `io.sockudo:sockudo-http-java` | Gradle check and `publishToMavenLocal` | `server-java-vX.Y.Z` |
 | `SockudoServer`, `PusherServer` | `dotnet format`, build, test, pack | `server-dotnet-vX.Y.Z` |
-| `Sockudo` Swift server SDK | Swift build/test and SwiftLint | `server-swift-vX.Y.Z` |
+| `Sockudo` Swift server SDK | Swift build/test and SwiftLint | `vX.Y.Z` |
 
 ## Release Procedure
 

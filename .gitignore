@@ -1,6 +1,7 @@
 /target
 **/target
 target-codex-*/
+.build/
 **/node_modules
 .env
 .DS_Store

@@ -28,9 +28,7 @@ Clone the Sockudo monorepo and use a local `replace` until this module is publis
 monorepo:
 
 ```sh
-git clone https://github.com/sockudo/sockudo.git
-go get github.com/sockudo/sockudo-http-go/v5
-go mod edit -replace github.com/sockudo/sockudo-http-go/v5=../sockudo/server-sdks/sockudo-http-go
+go get github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5
 ```
 
 ## Getting Started
@@ -39,7 +37,7 @@ go mod edit -replace github.com/sockudo/sockudo-http-go/v5=../sockudo/server-sdk
 package main
 
 import (
-    sockudo "github.com/sockudo/sockudo-http-go/v5"
+    sockudo "github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5"
 )
 
 func main() {
@@ -341,7 +339,7 @@ import (
     "appengine/urlfetch"
     "fmt"
     "net/http"
-    sockudo "github.com/sockudo/sockudo-http-go/v5"
+    sockudo "github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5"
 )
 
 func init() {

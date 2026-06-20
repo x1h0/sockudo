@@ -150,19 +150,18 @@ Realtime clients live under [client-sdks/](client-sdks/).
 
 SDK CI and publishing are managed from root workflows. See the
 [2026 SDK publishing runbook](docs/sdk-publishing-2026.md) before releasing packages or changing
-registry setup. Registry-native packages publish through protected workflows where supported;
-VCS-tagged ecosystems such as SwiftPM still require package repository/subtree-split handling unless
-their public package URL changes intentionally.
+registry setup. Registry-native packages publish through protected workflows where supported.
+SwiftPM packages are published from this monorepo through the root `Package.swift`.
 
-| Runtime | Directory | Package |
-| --- | --- | --- |
-| JavaScript / TypeScript | [`client-sdks/sockudo-js`](client-sdks/sockudo-js) | `@sockudo/client` |
-| AI Transport TypeScript | [`client-sdks/sockudo-ai-transport-js`](client-sdks/sockudo-ai-transport-js) | `@sockudo/ai-transport` |
-| Swift / Apple platforms | [`client-sdks/sockudo-swift`](client-sdks/sockudo-swift) | `SockudoSwift` |
-| Kotlin / JVM / Android | [`client-sdks/sockudo-kotlin`](client-sdks/sockudo-kotlin) | `io.sockudo:sockudo-kotlin` |
-| Flutter / Dart | [`client-sdks/sockudo-flutter`](client-sdks/sockudo-flutter) | `sockudo_flutter` |
-| .NET | [`client-sdks/sockudo-dotnet`](client-sdks/sockudo-dotnet) | `Sockudo.Client` |
-| Python | [`client-sdks/sockudo-python`](client-sdks/sockudo-python) | `sockudo-python` |
+| Runtime | Package |
+| --- | --- |
+| JavaScript / TypeScript | `@sockudo/client` |
+| AI Transport TypeScript | `@sockudo/ai-transport` |
+| Swift / Apple platforms | `SockudoSwift` from `https://github.com/sockudo/sockudo` |
+| Kotlin / JVM / Android | `io.sockudo:sockudo-kotlin` |
+| Flutter / Dart | `sockudo_flutter` |
+| .NET | `Sockudo.Client` |
+| Python | `sockudo-python` |
 
 JavaScript example:
 
@@ -202,21 +201,20 @@ where implemented.
 
 SDK CI and publishing are managed from root workflows. See the
 [2026 SDK publishing runbook](docs/sdk-publishing-2026.md) before releasing packages or changing
-registry setup. Registry-native packages publish through protected workflows where supported;
-VCS-tagged ecosystems such as Go modules, SwiftPM, and Packagist still require package
-repository/subtree-split handling unless their public package URL changes intentionally.
+registry setup. Registry-native packages publish through protected workflows where supported. Go
+modules and SwiftPM publish from this monorepo with package-manager-native tags and manifests.
 
-| Language | Directory | Package |
-| --- | --- | --- |
-| Node.js | [`server-sdks/sockudo-http-node`](server-sdks/sockudo-http-node) | `sockudo` |
-| Python | [`server-sdks/sockudo-http-python`](server-sdks/sockudo-http-python) | `sockudo-http-python` |
-| PHP | [`server-sdks/sockudo-http-php`](server-sdks/sockudo-http-php) | `sockudo/sockudo-php-server` |
-| Ruby | [`server-sdks/sockudo-http-ruby`](server-sdks/sockudo-http-ruby) | `sockudo` |
-| Go | [`server-sdks/sockudo-http-go`](server-sdks/sockudo-http-go) | `github.com/sockudo/sockudo-http-go/v5` |
-| Rust | [`server-sdks/sockudo-http-rust`](server-sdks/sockudo-http-rust) | `sockudo-http` |
-| Java | [`server-sdks/sockudo-http-java`](server-sdks/sockudo-http-java) | `io.sockudo:sockudo-http-java` |
-| .NET | [`server-sdks/sockudo-http-dotnet`](server-sdks/sockudo-http-dotnet) | `SockudoServer` |
-| Swift | [`server-sdks/sockudo-http-swift`](server-sdks/sockudo-http-swift) | `Sockudo` |
+| Language | Package |
+| --- | --- |
+| Node.js | `sockudo` |
+| Python | `sockudo-http-python` |
+| PHP | `sockudo/sockudo-php-server` |
+| Ruby | `sockudo` |
+| Go | `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5` |
+| Rust | `sockudo-http` |
+| Java | `io.sockudo:sockudo-http-java` |
+| .NET | `SockudoServer` |
+| Swift | `Sockudo` from `https://github.com/sockudo/sockudo` |
 
 Node.js example:
 
