@@ -6,13 +6,8 @@ icon: FileCode
 
 ## Install
 
-Clone the Sockudo monorepo and use a local `replace` until this module is published from the
-monorepo:
-
 ```bash
-git clone https://github.com/sockudo/sockudo.git
-go get github.com/sockudo/sockudo-http-go/v5
-go mod edit -replace github.com/sockudo/sockudo-http-go/v5=../sockudo/server-sdks/sockudo-http-go
+go get github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5
 ```
 
 ## Configure
@@ -20,7 +15,7 @@ go mod edit -replace github.com/sockudo/sockudo-http-go/v5=../sockudo/server-sdk
 ```go
 package main
 
-import sockudo "github.com/sockudo/sockudo-http-go/v5"
+import sockudo "github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5"
 
 var client = sockudo.Client{
     AppID:  "app-id",

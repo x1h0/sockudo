@@ -6,14 +6,12 @@ icon: FileCode
 
 ## Install
 
-Clone the monorepo and use a local Swift Package Manager path until package publishing is enabled:
-
 ```swift
-.package(path: "../sockudo/server-sdks/sockudo-http-swift")
+.package(url: "https://github.com/sockudo/sockudo", from: "1.0.0")
 ```
 
 ```swift
-.product(name: "Sockudo", package: "sockudo-http-swift")
+.product(name: "Sockudo", package: "sockudo")
 ```
 
 ## Configure

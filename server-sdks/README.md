@@ -7,20 +7,19 @@ scripts, and issue references recognizable.
 SDK CI and package publishing are managed from the monorepo root through
 `.github/workflows/sdk-ci.yml` and `.github/workflows/sdk-release.yml`. See the
 [2026 SDK publishing runbook](../docs/sdk-publishing-2026.md) before publishing
-or changing registry setup. VCS-tagged ecosystems such as Go modules, SwiftPM,
-and Packagist still require package repository/subtree-split handling unless
-their public package URLs are changed intentionally.
+or changing registry setup. Go modules, SwiftPM, and Packagist now publish from
+this monorepo using their package-manager-native release rules.
 
-## Imports
+## Packages
 
-| Directory | Current source | Legacy repo |
-| --- | --- | --- |
-| `sockudo-http-dotnet` | `server-sdks/sockudo-http-dotnet` | <https://github.com/sockudo/sockudo-http-dotnet> imported at `1132a9b8dfda` |
-| `sockudo-http-go` | `server-sdks/sockudo-http-go` | <https://github.com/sockudo/sockudo-http-go> imported at `7dc33e0c07b6` |
-| `sockudo-http-java` | `server-sdks/sockudo-http-java` | <https://github.com/sockudo/sockudo-http-java> imported at `0d756cc7434d` |
-| `sockudo-http-node` | `server-sdks/sockudo-http-node` | <https://github.com/sockudo/sockudo-http-node> imported at `dd821836f0a4` |
-| `sockudo-http-php` | `server-sdks/sockudo-http-php` | <https://github.com/sockudo/sockudo-http-php> imported at `8c2db8c661b5` |
-| `sockudo-http-python` | `server-sdks/sockudo-http-python` | <https://github.com/sockudo/sockudo-http-python> imported at `3892adefae8f` |
-| `sockudo-http-ruby` | `server-sdks/sockudo-http-ruby` | <https://github.com/sockudo/sockudo-http-ruby> imported at `c57e48a16f85` |
-| `sockudo-http-rust` | `server-sdks/sockudo-http-rust` | <https://github.com/sockudo/sockudo-http-rust> imported at `1e45c001db1e` |
-| `sockudo-http-swift` | `server-sdks/sockudo-http-swift` | <https://github.com/sockudo/sockudo-http-swift> imported at `6f8c710bcd5b` |
+| Package | Directory |
+| --- | --- |
+| `SockudoServer` | `server-sdks/sockudo-http-dotnet` |
+| `github.com/sockudo/sockudo/server-sdks/sockudo-http-go/v5` | `server-sdks/sockudo-http-go` |
+| `io.sockudo:sockudo-http-java` | `server-sdks/sockudo-http-java` |
+| `sockudo` | `server-sdks/sockudo-http-node` |
+| `sockudo/sockudo-php-server` | `server-sdks/sockudo-http-php` |
+| `sockudo-http-python` | `server-sdks/sockudo-http-python` |
+| `sockudo` | `server-sdks/sockudo-http-ruby` |
+| `sockudo-http` | `server-sdks/sockudo-http-rust` |
+| `Sockudo` | `server-sdks/sockudo-http-swift` |

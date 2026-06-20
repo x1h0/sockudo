@@ -8,17 +8,15 @@ icon: Smartphone
 
 ## Install
 
-Clone the monorepo and use a local Swift Package Manager path until package publishing is enabled:
-
 ```swift
-.package(path: "../sockudo/client-sdks/sockudo-swift")
+.package(url: "https://github.com/sockudo/sockudo", from: "1.0.0")
 ```
 
 ```swift
 .target(
     name: "YourApp",
     dependencies: [
-        .product(name: "SockudoSwift", package: "sockudo-swift"),
+        .product(name: "SockudoSwift", package: "sockudo"),
     ]
 )
 ```
