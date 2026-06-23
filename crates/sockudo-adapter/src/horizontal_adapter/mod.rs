@@ -61,6 +61,23 @@ pub enum RequestType {
     ChannelCountSync,   // Full snapshot of a peer's local channel counts (on join)
 }
 
+impl RequestType {
+    /// Broadcast-only request types that do not expect a response.
+    pub fn is_fire_and_forget(&self) -> bool {
+        matches!(
+            self,
+            Self::PresenceMemberJoined
+                | Self::PresenceMemberLeft
+                | Self::PresenceMemberUpdated
+                | Self::Heartbeat
+                | Self::NodeDead
+                | Self::PresenceStateSync
+                | Self::ChannelCountUpdate
+                | Self::ChannelCountSync
+        )
+    }
+}
+
 /// Request body for horizontal communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestBody {

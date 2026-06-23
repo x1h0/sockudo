@@ -78,3 +78,31 @@ async fn send_request_wakes_on_notify_without_polling_delay() {
     assert_eq!(responses.len(), 1);
     assert!(!timed_out, "waiter should complete via notify, not timeout");
 }
+
+#[test]
+fn test_is_fire_and_forget_true_for_all_eight() {
+    assert!(RequestType::PresenceMemberJoined.is_fire_and_forget());
+    assert!(RequestType::PresenceMemberLeft.is_fire_and_forget());
+    assert!(RequestType::PresenceMemberUpdated.is_fire_and_forget());
+    assert!(RequestType::Heartbeat.is_fire_and_forget());
+    assert!(RequestType::NodeDead.is_fire_and_forget());
+    assert!(RequestType::PresenceStateSync.is_fire_and_forget());
+    assert!(RequestType::ChannelCountUpdate.is_fire_and_forget());
+    assert!(RequestType::ChannelCountSync.is_fire_and_forget());
+}
+
+#[test]
+fn test_is_fire_and_forget_false_for_all_query_types() {
+    assert!(!RequestType::ChannelMembers.is_fire_and_forget());
+    assert!(!RequestType::ChannelSockets.is_fire_and_forget());
+    assert!(!RequestType::ChannelSocketsCount.is_fire_and_forget());
+    assert!(!RequestType::SocketExistsInChannel.is_fire_and_forget());
+    assert!(!RequestType::TerminateUserConnections.is_fire_and_forget());
+    assert!(!RequestType::ChannelsWithSocketsCount.is_fire_and_forget());
+    assert!(!RequestType::Sockets.is_fire_and_forget());
+    assert!(!RequestType::Channels.is_fire_and_forget());
+    assert!(!RequestType::SocketsCount.is_fire_and_forget());
+    assert!(!RequestType::ChannelMembersCount.is_fire_and_forget());
+    assert!(!RequestType::CountUserConnectionsInChannel.is_fire_and_forget());
+    assert!(!RequestType::BatchChannelSocketsCount.is_fire_and_forget());
+}

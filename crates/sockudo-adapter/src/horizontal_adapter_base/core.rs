@@ -664,6 +664,11 @@ where
                         });
                     }
 
+                    // No peer is waiting for a response, skip publishing.
+                    if request.request_type.is_fire_and_forget() {
+                        return Err(Error::NoResponseNeeded);
+                    }
+
                     Ok(response)
                 })
             }),

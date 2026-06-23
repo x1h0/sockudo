@@ -474,7 +474,9 @@ async fn process_request_message(
                 Ok(()) => should_commit = true,
                 Err(error) => warn!("Failed to publish Apache Iggy response: {error}"),
             },
-            Err(Error::OwnRequestIgnored | Error::RequestNotForThisNode) => {
+            Err(
+                Error::OwnRequestIgnored | Error::RequestNotForThisNode | Error::NoResponseNeeded,
+            ) => {
                 should_commit = true;
             }
             Err(error) => warn!("Apache Iggy request handler failed: {}", error),
