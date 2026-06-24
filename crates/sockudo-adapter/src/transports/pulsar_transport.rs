@@ -287,6 +287,11 @@ impl PulsarTransport {
                                         warn!("Failed to publish Pulsar response: {}", error);
                                     }
                                 }
+                                Err(
+                                    Error::OwnRequestIgnored
+                                    | Error::RequestNotForThisNode
+                                    | Error::NoResponseNeeded,
+                                ) => {}
                                 Err(error) => {
                                     warn!("Pulsar request handler failed: {}", error);
                                 }

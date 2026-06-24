@@ -270,6 +270,11 @@ impl KafkaTransport {
                                         warn!("Failed to publish Kafka response: {}", error);
                                     }
                                 }
+                                Err(
+                                    Error::OwnRequestIgnored
+                                    | Error::RequestNotForThisNode
+                                    | Error::NoResponseNeeded,
+                                ) => {}
                                 Err(error) => {
                                     warn!("Kafka request handler failed: {}", error);
                                 }

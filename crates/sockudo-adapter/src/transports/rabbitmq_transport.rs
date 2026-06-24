@@ -314,6 +314,11 @@ impl RabbitMqTransport {
                                         }
                                     }
                                 }
+                                Err(
+                                    Error::OwnRequestIgnored
+                                    | Error::RequestNotForThisNode
+                                    | Error::NoResponseNeeded,
+                                ) => {}
                                 Err(e) => {
                                     warn!("RabbitMQ request handler failed: {}", e);
                                 }

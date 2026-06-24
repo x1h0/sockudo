@@ -157,6 +157,9 @@ pub enum Error {
     #[error("Own request ignored")]
     OwnRequestIgnored,
 
+    #[error("Fire-and-forget request, no response needed")]
+    NoResponseNeeded,
+
     #[error("Request not for this node")]
     RequestNotForThisNode,
 

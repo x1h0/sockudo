@@ -229,6 +229,13 @@ impl GooglePubSubTransport {
                                     }
                                     ack_handler.ack();
                                 }
+                                Err(
+                                    Error::OwnRequestIgnored
+                                    | Error::RequestNotForThisNode
+                                    | Error::NoResponseNeeded,
+                                ) => {
+                                    ack_handler.ack();
+                                }
                                 Err(error) => {
                                     warn!("Google Pub/Sub request handler failed: {}", error);
                                     ack_handler.ack();
